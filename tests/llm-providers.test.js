@@ -24,7 +24,7 @@ describe('getProvider', () => {
 
   it('returns opencode provider', () => {
     expect(getProvider('opencode').name).toBe('Open Code');
-    expect(getProvider('opencode').binary).toBe('oo');
+    expect(getProvider('opencode').binary).toBe('opencode');
   });
 
   it('falls back to claude for unknown keys', () => {
@@ -195,16 +195,16 @@ describe('Aider provider', () => {
 describe('Open Code provider', () => {
   const oo = LLM_PROVIDERS.opencode;
 
-  it('uses "oo" binary', () => {
-    expect(oo.binary).toBe('oo');
+  it('uses "opencode" binary', () => {
+    expect(oo.binary).toBe('opencode');
   });
 
   it('buildCommand — plain', () => {
-    expect(oo.buildCommand()).toBe('oo');
+    expect(oo.buildCommand()).toBe('opencode');
   });
 
   it('buildCommand — with prompt', () => {
-    expect(oo.buildCommand('do thing')).toBe('oo "do thing"');
+    expect(oo.buildCommand('do thing')).toBe('opencode "do thing"');
   });
 
   it('translateCommand — maps additional commands like quick-spec', () => {
