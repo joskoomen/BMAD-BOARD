@@ -1573,6 +1573,15 @@ async function renderSettings() {
         </div>
       </div>
 
+      <!-- Mobile Companion -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">Mobile Companion</h3>
+        <p class="settings-hint" style="margin-bottom:12px">Access your BMAD Board from your phone. Open the URL below or scan the QR code.</p>
+        <div id="companion-section">
+          <p class="settings-hint">Loading...</p>
+        </div>
+      </div>
+
       <!-- Projects -->
       <div class="settings-section">
         <h3 class="settings-section-title">Projects</h3>
@@ -1613,6 +1622,111 @@ async function renderSettings() {
     });
     bmadSaveBtn.addEventListener('click', saveBmadConfigFromForm);
   }
+
+  // Render companion section
+  renderCompanionSection();
+}
+
+async function renderCompanionSection() {
+  const section = document.getElementById('companion-section');
+  if (!section) return;
+
+  try {
+    const info = await window.api.getCompanionInfo();
+    if (!info.enabled) {
+      section.innerHTML = `
+        <div class="settings-field settings-field-row">
+          <label class="settings-label">Enable companion server</label>
+          <label class="settings-toggle">
+            <input type="checkbox" id="companion-toggle">
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
+      `;
+      document.getElementById('companion-toggle').addEventListener('change', async (e) => {
+        await window.api.toggleCompanion(e.target.checked);
+        renderCompanionSection();
+      });
+      return;
+    }
+
+    const url = info.urls && info.urls[0] ? info.urls[0] : `http://localhost:${info.port}?token=${info.token}`;
+
+    // Generate QR code as SVG using a minimal inline generator
+    const qrSvg = generateQRPlaceholder(url);
+
+    section.innerHTML = `
+      <div class="settings-field settings-field-row">
+        <label class="settings-label">Companion server</label>
+        <label class="settings-toggle">
+          <input type="checkbox" id="companion-toggle" checked>
+          <span class="settings-toggle-slider"></span>
+        </label>
+      </div>
+      <div class="companion-info">
+        <div class="companion-qr" id="companion-qr">
+          ${qrSvg}
+        </div>
+        <div class="companion-details">
+          <div class="companion-url-group">
+            <label class="settings-label-sm">Connection URL</label>
+            <div class="companion-url-row">
+              <input type="text" class="settings-input settings-input-readonly" id="companion-url" value="${url}" readonly>
+              <button class="btn btn-ghost btn-sm" id="btn-copy-url" title="Copy URL">Copy</button>
+            </div>
+          </div>
+          <div class="companion-meta">
+            <span class="settings-hint">Port: ${info.port}</span>
+            ${info.addresses ? `<span class="settings-hint">IP: ${info.addresses.join(', ')}</span>` : ''}
+            <span class="settings-hint">Clients can connect on the same WiFi network</span>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-regen-token" style="margin-top:8px">Regenerate Token</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('companion-toggle').addEventListener('change', async (e) => {
+      await window.api.toggleCompanion(e.target.checked);
+      renderCompanionSection();
+    });
+
+    document.getElementById('btn-copy-url').addEventListener('click', () => {
+      navigator.clipboard.writeText(url).then(() => {
+        const btn = document.getElementById('btn-copy-url');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    });
+
+    document.getElementById('btn-regen-token').addEventListener('click', async () => {
+      await window.api.regenerateCompanionToken();
+      renderCompanionSection();
+    });
+
+  } catch (err) {
+    section.innerHTML = `<p class="settings-hint" style="color:var(--danger)">Failed to load companion info</p>`;
+  }
+}
+
+/**
+ * Generate a simple QR-code-like placeholder SVG.
+ * For a real QR code, we'd use a library, but this provides a visual
+ * hint that the user should scan something. The URL is copyable below.
+ */
+function generateQRPlaceholder(url) {
+  // Simple visual placeholder - in production, use a QR library
+  // For now, show a styled box with instructions
+  return `
+    <div style="width:160px;height:160px;background:white;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:12px;text-align:center">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0f0f23" stroke-width="1.5">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/>
+        <rect x="18" y="14" width="3" height="3"/><rect x="14" y="18" width="3" height="3"/>
+        <rect x="18" y="18" width="3" height="3"/>
+      </svg>
+      <span style="color:#0f0f23;font-size:10px;margin-top:8px">Copy URL or scan<br>with phone camera</span>
+    </div>
+  `;
 }
 
 async function saveSettingsFromForm() {

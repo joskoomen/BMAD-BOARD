@@ -48,6 +48,11 @@ contextBridge.exposeInMainWorld('api', {
   launchPartyMode: () => ipcRenderer.invoke('launch-party-mode'),
   openTerminal: (command) => ipcRenderer.invoke('open-terminal', command),
 
+  // Companion Server
+  getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),
+  toggleCompanion: (enabled) => ipcRenderer.invoke('companion:toggle', enabled),
+  regenerateCompanionToken: () => ipcRenderer.invoke('companion:regenerate-token'),
+
   // Embedded Terminal (PTY)
   terminalCreate: (opts) => ipcRenderer.invoke('terminal:create', opts || {}),
   terminalInput: (id, data) => ipcRenderer.send('terminal:input', { id, data }),

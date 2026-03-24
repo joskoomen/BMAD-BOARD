@@ -1732,3 +1732,48 @@ html, body {
   transform: translateX(18px);
   background: var(--accent);
 }
+
+/* ── Companion Section ───────────────────────────────────────────────── */
+
+.companion-info {
+  display: flex;
+  gap: 20px;
+  margin-top: 12px;
+  align-items: flex-start;
+}
+
+.companion-qr {
+  flex-shrink: 0;
+}
+
+.companion-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.companion-url-group {
+  margin-bottom: 8px;
+}
+
+.companion-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.companion-url-row .settings-input {
+  flex: 1;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 11px;
+}
+
+.settings-input-readonly {
+  opacity: 0.8;
+  cursor: text;
+}
+
+.companion-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

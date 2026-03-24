@@ -1,0 +1,27 @@
+{
+  "name": "BMAD Board Companion",
+  "short_name": "BMAD Board",
+  "description": "Mobile companion for BMAD Board — view epics, stories, and terminal from your phone",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0f0f23",
+  "background_color": "#0f0f23",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

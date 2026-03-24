@@ -6,11 +6,14 @@ const { buildClaudeCommand } = require('./lib/phase-commands');
 const { openClaudeWithCommand, openPartyMode } = require('./lib/terminal-launcher');
 const { TerminalManager } = require('./lib/terminal-manager');
 const { getProviderList } = require('./lib/llm-providers');
+const { CompanionServer, startHeartbeat } = require('./lib/companion-server');
 
 let mainWindow;
 let currentProjectPath = null;
 const windowProjectPaths = new Map();  // webContents.id -> projectPath
 const terminalManager = new TerminalManager();
+let companionServer = null;
+let companionHeartbeat = null;
 
 const PREFS_FILE = path.join(app.getPath('userData'), 'preferences.json');
 
@@ -67,7 +70,39 @@ function getWindowFromEvent(event) {
   return BrowserWindow.fromWebContents(event.sender);
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  createWindow();
+  await startCompanionServer();
+});
+
+async function startCompanionServer() {
+  const prefs = loadPrefs();
+  const companionEnabled = prefs.settings?.companion?.enabled !== false; // enabled by default
+  if (!companionEnabled) return;
+
+  const port = prefs.settings?.companion?.port || 3939;
+
+  companionServer = new CompanionServer({
+    terminalManager,
+    scanProject: (projectPath) => scanProject(projectPath),
+    getProjectPath: () => currentProjectPath,
+    getSettings: () => {
+      const p = loadPrefs();
+      return p.settings || {};
+    },
+    buildCommand: (phase, storySlug, storyFilePath) => {
+      return buildClaudeCommand(phase, storySlug, storyFilePath);
+    }
+  });
+
+  try {
+    await companionServer.start(port);
+    companionHeartbeat = startHeartbeat(companionServer);
+    console.log('[companion] Server started successfully');
+  } catch (err) {
+    console.error('[companion] Failed to start server:', err.message);
+  }
+}
 
 ipcMain.handle('new-window', () => {
   createWindow();
@@ -76,6 +111,8 @@ ipcMain.handle('new-window', () => {
 
 app.on('window-all-closed', () => {
   terminalManager.killAll();
+  if (companionHeartbeat) clearInterval(companionHeartbeat);
+  if (companionServer) companionServer.stop();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -400,6 +437,41 @@ ipcMain.handle('settings:save', (_, settings) => {
 
 ipcMain.handle('settings:get-providers', () => {
   return getProviderList();
+});
+
+// ── IPC: Companion Server ──────────────────────────────────────────────
+
+ipcMain.handle('companion:get-info', () => {
+  if (!companionServer) return { enabled: false };
+  return {
+    enabled: true,
+    ...companionServer.getConnectionInfo()
+  };
+});
+
+ipcMain.handle('companion:toggle', async (_, enabled) => {
+  const prefs = loadPrefs();
+  if (!prefs.settings) prefs.settings = {};
+  if (!prefs.settings.companion) prefs.settings.companion = {};
+  prefs.settings.companion.enabled = enabled;
+  savePrefs(prefs);
+
+  if (enabled && !companionServer) {
+    await startCompanionServer();
+  } else if (!enabled && companionServer) {
+    if (companionHeartbeat) clearInterval(companionHeartbeat);
+    companionServer.stop();
+    companionServer = null;
+  }
+
+  return enabled;
+});
+
+ipcMain.handle('companion:regenerate-token', () => {
+  if (!companionServer) return null;
+  const crypto = require('crypto');
+  companionServer.token = crypto.randomBytes(24).toString('hex');
+  return companionServer.getConnectionInfo();
 });
 
 ipcMain.handle('show-notification', (event, { title, body }) => {

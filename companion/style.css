@@ -1,0 +1,537 @@
+/* ── BMAD Board Companion — Mobile PWA Styles ──────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-primary: #0f0f23;
+  --bg-secondary: #1a1a2e;
+  --bg-tertiary: #16213e;
+  --bg-card: #1e1e3a;
+  --bg-card-hover: #252550;
+  --bg-input: #12122a;
+  --border: #2a2a4a;
+  --border-light: #3a3a5a;
+  --text-primary: #e8e8f0;
+  --text-secondary: #a0a0c0;
+  --text-muted: #6b6b8a;
+  --accent: #6c5ce7;
+  --accent-hover: #7c6cf7;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+  --purple: #8b5cf6;
+  --danger: #ef4444;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  /* Phase colors */
+  --phase-backlog: #6b7280;
+  --phase-ready: #f59e0b;
+  --phase-progress: #3b82f6;
+  --phase-review: #8b5cf6;
+  --phase-done: #10b981;
+
+  /* Safe areas for notch phones */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ── App Shell ───────────────────────────────────────────────────────── */
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+#header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--safe-top) + 8px) 16px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  min-height: 52px;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#header-title {
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60vw;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:active {
+  background: var(--bg-tertiary);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn-primary:active {
+  background: var(--accent-hover);
+}
+
+/* ── Connection Dot ──────────────────────────────────────────────────── */
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-connected { background: var(--success); }
+.dot-disconnected { background: var(--danger); }
+.dot-connecting { background: var(--warning); animation: pulse 1s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Main Content ────────────────────────────────────────────────────── */
+
+#main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.view {
+  padding: 16px;
+  min-height: 100%;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ── Connect Screen ──────────────────────────────────────────────────── */
+
+#view-connect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.connect-box {
+  text-align: center;
+  max-width: 320px;
+  width: 100%;
+}
+
+.connect-icon {
+  margin-bottom: 20px;
+}
+
+.connect-box h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.connect-box p {
+  margin-bottom: 20px;
+}
+
+.connect-box input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 14px;
+  margin-bottom: 12px;
+  outline: none;
+}
+
+.connect-box input:focus {
+  border-color: var(--accent);
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.text-muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── Dashboard ───────────────────────────────────────────────────────── */
+
+.project-header {
+  margin-bottom: 16px;
+}
+
+.project-header h2 {
+  font-size: 20px;
+}
+
+.epics-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Epic Card ───────────────────────────────────────────────────────── */
+
+.epic-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.epic-card:active {
+  background: var(--bg-card-hover);
+}
+
+.epic-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.epic-number {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.epic-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+.epic-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-primary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Phase summary dots */
+.phase-summary {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.phase-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* ── Stories List ─────────────────────────────────────────────────────── */
+
+.epic-header {
+  margin-bottom: 16px;
+}
+
+.epic-header h2 {
+  font-size: 18px;
+  margin-top: 6px;
+}
+
+.stories-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.story-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.story-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.story-title {
+  font-size: 14px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-number {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+/* ── Phase Pills ─────────────────────────────────────────────────────── */
+
+.phase-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.phase-pill[data-phase="backlog"] { background: rgba(107,114,128,0.2); color: var(--phase-backlog); }
+.phase-pill[data-phase="ready-for-dev"] { background: rgba(245,158,11,0.2); color: var(--phase-ready); }
+.phase-pill[data-phase="in-progress"] { background: rgba(59,130,246,0.2); color: var(--phase-progress); }
+.phase-pill[data-phase="review"] { background: rgba(139,92,246,0.2); color: var(--phase-review); }
+.phase-pill[data-phase="done"] { background: rgba(16,185,129,0.2); color: var(--phase-done); }
+
+/* ── Terminal ────────────────────────────────────────────────────────── */
+
+#view-terminal {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#terminal-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--bg-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  -webkit-overflow-scrolling: touch;
+}
+
+#terminal-output .line {
+  padding: 1px 0;
+}
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  padding-bottom: calc(8px + var(--safe-bottom));
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+#terminal-input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 14px;
+  outline: none;
+}
+
+#terminal-input:focus {
+  border-color: var(--accent);
+}
+
+/* ── Bottom Navigation ───────────────────────────────────────────────── */
+
+#nav {
+  display: flex;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--safe-bottom);
+  flex-shrink: 0;
+}
+
+.nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.nav-item.active {
+  color: var(--accent);
+}
+
+.nav-item:active {
+  color: var(--text-primary);
+}
+
+/* ── Scrollbar (thin on mobile) ──────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 3px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  z-index: 100;
+  animation: toast-in 300ms ease, toast-out 300ms ease 2.7s;
+  pointer-events: none;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes toast-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ── ANSI Color Support for Terminal ─────────────────────────────────── */
+.ansi-bold { font-weight: bold; }
+.ansi-dim { opacity: 0.7; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+.ansi-black { color: #6b7280; }
+.ansi-red { color: #ef4444; }
+.ansi-green { color: #10b981; }
+.ansi-yellow { color: #f59e0b; }
+.ansi-blue { color: #3b82f6; }
+.ansi-magenta { color: #8b5cf6; }
+.ansi-cyan { color: #06b6d4; }
+.ansi-white { color: #e8e8f0; }
+.ansi-bright-black { color: #9ca3af; }
+.ansi-bright-red { color: #f87171; }
+.ansi-bright-green { color: #34d399; }
+.ansi-bright-yellow { color: #fbbf24; }
+.ansi-bright-blue { color: #60a5fa; }
+.ansi-bright-magenta { color: #a78bfa; }
+.ansi-bright-cyan { color: #22d3ee; }
+.ansi-bright-white { color: #f9fafb; }
