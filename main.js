@@ -17,6 +17,7 @@ let companionHeartbeat = null;
 
 const PREFS_FILE = path.join(app.getPath('userData'), 'preferences.json');
 
+/** Load preferences from the userData JSON file. */
 function loadPrefs() {
   try {
     if (fs.existsSync(PREFS_FILE)) return JSON.parse(fs.readFileSync(PREFS_FILE, 'utf-8'));
@@ -24,12 +25,18 @@ function loadPrefs() {
   return {};
 }
 
+/** Persist preferences to the userData JSON file.
+ * @param {Object} prefs - The preferences object to save.
+ */
 function savePrefs(prefs) {
   const dir = path.dirname(PREFS_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(PREFS_FILE, JSON.stringify(prefs, null, 2));
 }
 
+/** Create and configure a new BrowserWindow.
+ * @returns {BrowserWindow} The newly created window.
+ */
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
@@ -56,16 +63,28 @@ function createWindow() {
   return win;
 }
 
+/** Get the project path associated with the IPC event's window.
+ * @param {Electron.IpcMainInvokeEvent} event
+ * @returns {string|null}
+ */
 function getWindowProjectPath(event) {
   return windowProjectPaths.get(event.sender.id) || currentProjectPath;
 }
 
+/** Associate a project path with the IPC event's window.
+ * @param {Electron.IpcMainInvokeEvent} event
+ * @param {string} projectPath
+ */
 function setWindowProjectPath(event, projectPath) {
   windowProjectPaths.set(event.sender.id, projectPath);
   // Keep global in sync for backward compat
   currentProjectPath = projectPath;
 }
 
+/** Get the BrowserWindow instance from an IPC event.
+ * @param {Electron.IpcMainInvokeEvent} event
+ * @returns {BrowserWindow}
+ */
 function getWindowFromEvent(event) {
   return BrowserWindow.fromWebContents(event.sender);
 }
@@ -75,6 +94,7 @@ app.whenReady().then(async () => {
   await startCompanionServer();
 });
 
+/** Initialize and start the companion HTTP/WS server if enabled in preferences. */
 async function startCompanionServer() {
   const prefs = loadPrefs();
   const companionEnabled = prefs.settings?.companion?.enabled !== false; // enabled by default
@@ -121,6 +141,11 @@ async function startCompanionServer() {
 
 // ── Story Status Update in YAML ────────────────────────────────────────
 
+/** Update a story's phase in sprint-status.yaml.
+ * @param {string} projectPath - Root path of the project.
+ * @param {string} slug - The story slug identifier.
+ * @param {string} newPhase - The new phase value to set.
+ */
 function updateStoryStatusInYaml(projectPath, slug, newPhase) {
   const implDir = path.join(projectPath, '_bmad-output', 'implementation');
   const candidates = [
@@ -378,10 +403,17 @@ ipcMain.handle('save-story-session', (_, storySlug, phase, sessionId) => {
 
 // ── Per-project session history (.bmad-board/session-history.json) ────────
 
+/** Get the per-project session history file path.
+ * @param {string} projectPath
+ * @returns {string}
+ */
 function getProjectHistoryPath(projectPath) {
   return path.join(projectPath, '.bmad-board', 'session-history.json');
 }
 
+/** Migrate legacy global session history entries to the per-project file.
+ * @param {string} projectPath
+ */
 function migrateSessionHistory(projectPath) {
   const prefs = loadPrefs();
   if (!Array.isArray(prefs.sessionHistory) || prefs.sessionHistory.length === 0) return;
@@ -404,6 +436,10 @@ function migrateSessionHistory(projectPath) {
   savePrefs(prefs);
 }
 
+/** Load session history entries for a project.
+ * @param {string} projectPath
+ * @returns {Array}
+ */
 function loadProjectHistory(projectPath) {
   if (!projectPath) return [];
   const histFile = getProjectHistoryPath(projectPath);
@@ -413,6 +449,10 @@ function loadProjectHistory(projectPath) {
   return [];
 }
 
+/** Save session history entries for a project.
+ * @param {string} projectPath
+ * @param {Array} history
+ */
 function saveProjectHistory(projectPath, history) {
   if (!projectPath) return;
   const histFile = getProjectHistoryPath(projectPath);
@@ -651,6 +691,9 @@ ipcMain.handle('project:unarchive', (_, projectPath) => {
 const MAX_VERSIONS_PER_FILE = 20;
 const VERSIONS_FILE = path.join(app.getPath('userData'), 'file-versions.json');
 
+/** Load the file versioning database from disk.
+ * @returns {Object}
+ */
 function loadVersionsDb() {
   try {
     if (fs.existsSync(VERSIONS_FILE)) return JSON.parse(fs.readFileSync(VERSIONS_FILE, 'utf-8'));
@@ -658,12 +701,19 @@ function loadVersionsDb() {
   return {};
 }
 
+/** Persist the file versioning database to disk.
+ * @param {Object} db
+ */
 function saveVersionsDb(db) {
   const dir = path.dirname(VERSIONS_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(VERSIONS_FILE, JSON.stringify(db));
 }
 
+/** Save a version snapshot of a file before overwriting.
+ * @param {string} filePath - Absolute path to the file.
+ * @param {string} content - The file content to snapshot.
+ */
 function saveVersion(filePath, content) {
   const db = loadVersionsDb();
   if (!db[filePath]) db[filePath] = [];
@@ -678,6 +728,10 @@ function saveVersion(filePath, content) {
   saveVersionsDb(db);
 }
 
+/** Get all saved versions of a file.
+ * @param {string} filePath - Absolute path to the file.
+ * @returns {Array<{index: number, savedAt: string, content: string, preview: string}>}
+ */
 function getVersions(filePath) {
   const db = loadVersionsDb();
   return (db[filePath] || []).map((v, i) => ({
@@ -690,6 +744,11 @@ function getVersions(filePath) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
+/** Load a project: set paths, update prefs, scan BMAD files, and set window title.
+ * @param {string} projectPath - Root path of the project to load.
+ * @param {Electron.IpcMainInvokeEvent} [event] - IPC event for per-window tracking.
+ * @returns {Object} Scanned project data.
+ */
 function loadProject(projectPath, event) {
   currentProjectPath = projectPath;
 

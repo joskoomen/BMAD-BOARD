@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
   tryAutoConnect();
 });
 
+/** Register the service worker for PWA support and push notification handling. */
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(reg => {
@@ -54,6 +55,7 @@ function registerServiceWorker() {
   }
 }
 
+/** Bind all UI event listeners for navigation, forms, and terminal input. */
 function setupEventListeners() {
   // Connect form
   document.getElementById('btn-connect').addEventListener('click', handleConnect);
@@ -88,6 +90,7 @@ function setupEventListeners() {
 
 // ── Auto-connect ────────────────────────────────────────────────────────
 
+/** Attempt automatic connection using URL params (QR code) or saved credentials. */
 function tryAutoConnect() {
   // Check URL params first (from QR code scan)
   const params = new URLSearchParams(window.location.search);
@@ -121,6 +124,7 @@ function tryAutoConnect() {
 
 // ── Connection ──────────────────────────────────────────────────────────
 
+/** Parse the URL input field and initiate connection to the desktop server. */
 function handleConnect() {
   const input = document.getElementById('input-url').value.trim();
   if (!input) return;
@@ -135,6 +139,7 @@ function handleConnect() {
   }
 }
 
+/** Authenticate with the server, open a WebSocket, and load project data. */
 async function connect() {
   setConnectionState('connecting');
   hideConnectError();
@@ -164,6 +169,7 @@ async function connect() {
   }
 }
 
+/** Open a WebSocket connection to the server for real-time events. */
 function connectWebSocket() {
   if (ws) {
     ws.close();
@@ -200,6 +206,7 @@ function connectWebSocket() {
   };
 }
 
+/** Schedule a WebSocket reconnection with exponential backoff. */
 function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
@@ -213,6 +220,10 @@ function scheduleReconnect() {
   }, delay);
 }
 
+/**
+ * Dispatch an incoming WebSocket message to the appropriate handler.
+ * @param {Object} msg - Parsed JSON message with a `type` field.
+ */
 function handleWSMessage(msg) {
   switch (msg.type) {
     case 'project:state':
@@ -272,6 +283,12 @@ function handleWSMessage(msg) {
 
 // ── API Helper ──────────────────────────────────────────────────────────
 
+/**
+ * Fetch wrapper that prepends the server URL and injects the auth token.
+ * @param {string} path - API path (e.g. '/api/project').
+ * @param {RequestInit} [opts] - Additional fetch options.
+ * @returns {Promise<Response>}
+ */
 function apiFetch(path, opts = {}) {
   return fetch(`${serverUrl}${path}`, {
     ...opts,
@@ -285,6 +302,7 @@ function apiFetch(path, opts = {}) {
 
 // ── Project Data ────────────────────────────────────────────────────────
 
+/** Fetch the current project data from the server and store it locally. */
 async function loadProject() {
   try {
     const res = await apiFetch('/api/project');
@@ -296,6 +314,10 @@ async function loadProject() {
 
 // ── Views ───────────────────────────────────────────────────────────────
 
+/**
+ * Switch the visible view panel and update navigation state.
+ * @param {string} name - View name ('connect', 'dashboard', 'epic', 'terminal').
+ */
 function showView(name) {
   currentView = name;
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -317,12 +339,17 @@ function showView(name) {
   }
 }
 
+/** Navigate to the dashboard view and render the epics grid. */
 function showDashboard() {
   showView('dashboard');
   document.getElementById('header-title').textContent = projectData?.projectMeta?.name || 'BMAD Board';
   renderDashboard();
 }
 
+/**
+ * Navigate to the detail view for a specific epic.
+ * @param {number} epicNumber - The epic number to display.
+ */
 function showEpicDetail(epicNumber) {
   const epic = (projectData?.epics || []).find(e => e.number === epicNumber);
   if (!epic) return;
@@ -332,6 +359,7 @@ function showEpicDetail(epicNumber) {
   renderEpicDetail();
 }
 
+/** Navigate to the terminal view, starting a session or watching a shared one. */
 function showTerminal() {
   showView('terminal');
   // If shared terminals available, default to shared mode
@@ -345,12 +373,14 @@ function showTerminal() {
   setTimeout(() => document.getElementById('terminal-input').focus(), 100);
 }
 
+/** Handle the back button press, returning from epic detail to dashboard. */
 function handleBack() {
   if (currentView === 'epic') {
     showDashboard();
   }
 }
 
+/** Request a project data and shared terminal list refresh from the server. */
 function handleRefresh() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'project:refresh' }));
@@ -361,6 +391,7 @@ function handleRefresh() {
 
 // ── Renderers ───────────────────────────────────────────────────────────
 
+/** Render the epic cards grid on the dashboard from current project data. */
 function renderDashboard() {
   if (!projectData) return;
 
@@ -433,6 +464,7 @@ function renderDashboard() {
   }
 }
 
+/** Render the story list for the currently selected epic. */
 function renderEpicDetail() {
   if (!currentEpic) return;
 
@@ -497,6 +529,10 @@ function renderEpicDetail() {
 
 // ── Story Phase Advance ─────────────────────────────────────────────────
 
+/**
+ * Advance a story to its next phase after user confirmation.
+ * @param {string} slug - The story slug identifier.
+ */
 function advanceStory(slug) {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     showToast('Not connected');
@@ -522,6 +558,11 @@ function advanceStory(slug) {
   showToast('Advancing...');
 }
 
+/**
+ * Find a story by slug across all epics.
+ * @param {string} slug - The story slug to search for.
+ * @returns {Object|null} The story object, or null if not found.
+ */
 function findStory(slug) {
   for (const epic of (projectData?.epics || [])) {
     const story = epic.stories.find(s => s.slug === slug);
@@ -534,10 +575,15 @@ function findStory(slug) {
 
 let terminalMode = 'own'; // 'own' or 'shared'
 
+/** @returns {boolean} Whether the terminal is in shared (desktop watching) mode. */
 function isSharedMode() {
   return terminalMode === 'shared';
 }
 
+/**
+ * Set the terminal mode and update the UI toggle button.
+ * @param {boolean} shared - True for desktop sharing mode, false for own session.
+ */
 function setSharedMode(shared) {
   terminalMode = shared ? 'shared' : 'own';
   const btn = document.getElementById('btn-terminal-mode');
@@ -551,6 +597,7 @@ function setSharedMode(shared) {
   }
 }
 
+/** Toggle between own terminal session and watching a shared desktop terminal. */
 function toggleTerminalMode() {
   if (isSharedMode()) {
     // Switch to own terminal
@@ -572,6 +619,10 @@ function toggleTerminalMode() {
   }
 }
 
+/**
+ * Subscribe to a shared desktop terminal session via WebSocket.
+ * @param {string} sessionId - The terminal session ID to watch.
+ */
 function watchSharedTerminal(sessionId) {
   watchingSharedTerminal = sessionId;
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -579,6 +630,7 @@ function watchSharedTerminal(sessionId) {
   }
 }
 
+/** Show the terminal mode toggle button when shared sessions are available. */
 function updateTerminalModeIndicator() {
   const btn = document.getElementById('btn-terminal-mode');
   if (sharedTerminalSessions.length > 0) {
@@ -586,10 +638,12 @@ function updateTerminalModeIndicator() {
   }
 }
 
+/** Clear all content from the terminal output element. */
 function clearTerminalOutput() {
   document.getElementById('terminal-output').innerHTML = '';
 }
 
+/** Send the terminal input field value to the active PTY session. */
 function sendTerminalInput() {
   const input = document.getElementById('terminal-input');
   const text = input.value;
@@ -603,6 +657,10 @@ function sendTerminalInput() {
   input.value = '';
 }
 
+/**
+ * Append raw terminal data to the output, stripping ANSI escape codes.
+ * @param {string} rawData - Raw terminal output potentially containing ANSI sequences.
+ */
 function appendTerminalData(rawData) {
   const output = document.getElementById('terminal-output');
   // Simple ANSI stripping + basic color support
@@ -613,6 +671,11 @@ function appendTerminalData(rawData) {
   output.scrollTop = output.scrollHeight;
 }
 
+/**
+ * Append a styled line to the terminal output.
+ * @param {string} text - Line text content.
+ * @param {string} [className] - Optional CSS class for styling.
+ */
 function appendTerminalLine(text, className) {
   const output = document.getElementById('terminal-output');
   const div = document.createElement('div');
@@ -635,12 +698,18 @@ function stripAnsi(str) {
 
 // ── Notifications ───────────────────────────────────────────────────────
 
+/** Prompt the user for notification permission if not already granted or denied. */
 function requestNotificationPermission() {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
 }
 
+/**
+ * Show an in-app toast and, if permitted, an OS notification.
+ * @param {string} title - Notification title.
+ * @param {string} body - Notification body text.
+ */
 function showLocalNotification(title, body) {
   // In-app toast
   showToast(`${title}: ${body}`);
@@ -672,6 +741,10 @@ function showLocalNotification(title, body) {
   }
 }
 
+/**
+ * Navigate to the relevant view when a push notification is clicked.
+ * @param {Object} data - Notification payload with an optional `view` field.
+ */
 function handleNotificationClick(data) {
   // Navigate to relevant view when notification is clicked
   if (data.view === 'terminal') {
@@ -681,22 +754,35 @@ function handleNotificationClick(data) {
 
 // ── UI Helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Update the connection status indicator dot.
+ * @param {string} state - One of 'connecting', 'connected', or 'disconnected'.
+ */
 function setConnectionState(state) {
   const dot = document.getElementById('connection-dot');
   dot.className = `dot dot-${state}`;
   dot.title = state.charAt(0).toUpperCase() + state.slice(1);
 }
 
+/**
+ * Display an error message on the connect screen.
+ * @param {string} msg - Error message to show.
+ */
 function showConnectError(msg) {
   const el = document.getElementById('connect-error');
   el.textContent = msg;
   el.classList.remove('hidden');
 }
 
+/** Hide the connect screen error message. */
 function hideConnectError() {
   document.getElementById('connect-error').classList.add('hidden');
 }
 
+/**
+ * Show a brief toast notification that auto-dismisses after 3 seconds.
+ * @param {string} msg - Message to display.
+ */
 function showToast(msg) {
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
@@ -707,6 +793,11 @@ function showToast(msg) {
   setTimeout(() => toast.remove(), 3000);
 }
 
+/**
+ * Escape a string for safe HTML insertion.
+ * @param {string} str - Raw string to escape.
+ * @returns {string} HTML-escaped string.
+ */
 function esc(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

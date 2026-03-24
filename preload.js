@@ -1,3 +1,11 @@
+/**
+ * Preload script — exposes a safe `window.api` bridge between the
+ * renderer process and main process via Electron's contextBridge.
+ *
+ * Each method maps to an ipcMain handler in main.js.
+ * Grouped by domain: project, settings, BMAD config, session history,
+ * terminal, and companion server.
+ */
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
