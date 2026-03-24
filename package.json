@@ -1,0 +1,85 @@
+{
+  "name": "bmad-board",
+  "version": "1.0.0",
+  "description": "BMAD Board - Project management dashboard for BMAD-driven development",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "postinstall": "npx @electron/rebuild",
+    "dist": "electron-builder --mac --win --linux",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:win": "electron-builder --win nsis",
+    "dist:linux": "electron-builder --linux AppImage deb",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "build": {
+    "appId": "com.bmad.board",
+    "productName": "BMAD Board",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    },
+    "dmg": {
+      "title": "BMAD Board",
+      "iconSize": 80,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "icon": "assets/icon.png",
+    "files": [
+      "**/*",
+      "!node_modules/.cache",
+      "!dist/"
+    ],
+    "extraResources": [],
+    "asar": true
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "marked": "^15.0.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "electron": "^41.0.3",
+    "electron-builder": "^26.0.0",
+    "vitest": "^4.1.1"
+  },
+  "author": "Jos Koomen",
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BMAD Board</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar Navigation -->
+    <nav id="sidebar">
+      <div class="sidebar-header">
+        <h1 class="logo">BMAD Board</h1>
+      </div>
+      <ul class="nav-items">
+        <li class="nav-item active" data-view="epics">
+          <span class="nav-icon">&#9776;</span>
+          <span>Epics</span>
+        </li>
+        <li class="nav-item" data-view="terminal">
+          <span class="nav-icon">&#9002;</span>
+          <span>Terminal</span>
+        </li>
+        <li class="nav-item" data-view="history">
+          <span class="nav-icon">&#128336;</span>
+          <span>History</span>
+        </li>
+        <li class="nav-item" data-view="party">
+          <span class="nav-icon">&#127881;</span>
+          <span>Party Mode</span>
+        </li>
+        <li class="nav-item" data-view="documents">
+          <span class="nav-icon">&#128196;</span>
+          <span>Documents</span>
+        </li>
+        <li class="nav-item" data-view="settings">
+          <span class="nav-icon">&#9881;</span>
+          <span>Settings</span>
+        </li>
+      </ul>
+
+      <!-- BMAD Quick Actions (visible when terminal is active) -->
+      <div id="bmad-actions" class="sidebar-section hidden">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">BMAD Commands</div>
+          <button id="btn-edit-quick-actions" class="sidebar-edit-btn" title="Edit quick actions">&#9998;</button>
+        </div>
+        <div id="bmad-action-list" class="bmad-action-list">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div id="project-selector" class="project-selector">
+          <label class="project-selector-label">Project</label>
+          <select id="project-select" class="project-select">
+            <option value="">No project</option>
+          </select>
+          <button id="btn-add-epic" class="btn btn-primary btn-block" title="Browse for a project folder">+ Open Project</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main id="content">
+      <!-- Split layout: top panel (views) + bottom panel (terminal) -->
+      <div id="split-layout" class="split-layout">
+        <!-- Top pane: scrollable views -->
+        <div id="split-top" class="split-top">
+          <!-- Epics View -->
+          <div id="view-epics" class="view active">
+            <div class="view-header">
+              <h2>Epics</h2>
+              <div class="view-actions">
+                <input type="text" id="search-epics" placeholder="Search epics..." class="search-input">
+              </div>
+            </div>
+            <div id="epics-grid" class="epics-grid"></div>
+          </div>
+
+          <!-- Epic Detail / Stories View -->
+          <div id="view-epic-detail" class="view">
+            <div class="view-header">
+              <button id="btn-back-epics" class="btn btn-ghost">&larr; Back to Epics</button>
+              <div class="view-actions"></div>
+            </div>
+            <div id="epic-detail-header" class="epic-detail-header"></div>
+            <div id="stories-list" class="stories-list"></div>
+          </div>
+
+          <!-- History View -->
+          <div id="view-history" class="view">
+            <div class="view-header">
+              <h2>Session History</h2>
+              <div class="view-actions">
+                <button class="btn btn-ghost btn-sm" id="btn-clear-history">Clear History</button>
+              </div>
+            </div>
+            <div id="history-list" class="history-list">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Documents View -->
+          <div id="view-party" class="view"></div>
+
+          <!-- Settings View -->
+          <div id="view-settings" class="view">
+            <div class="view-header">
+              <h2>Settings</h2>
+            </div>
+            <div id="settings-content" class="settings-content">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Resize handle -->
+        <div id="split-handle" class="split-handle">
+          <div class="split-handle-grip"></div>
+        </div>
+
+        <!-- Bottom pane: terminal (always present, collapsible) -->
+        <div id="split-bottom" class="split-bottom">
+          <div class="terminal-container">
+            <div class="terminal-toolbar">
+              <div class="terminal-toolbar-left" id="terminal-tabs">
+                <!-- Tabs rendered dynamically -->
+              </div>
+              <div class="terminal-toolbar-right">
+                <div class="terminal-cwd" id="terminal-cwd"></div>
+                <button class="terminal-toolbar-btn" id="btn-terminal-clear" title="Clear active terminal">
+                  <span>Clear</span>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-body" id="terminal-body"></div>
+            <div class="terminal-status">
+              <div class="terminal-status-item">
+                <span class="terminal-status-dot" id="terminal-status-dot"></span>
+                <span>PTY</span>
+              </div>
+              <div class="terminal-status-item" id="terminal-status-shell">
+                <span>bash</span>
+              </div>
+              <div class="terminal-status-item" style="margin-left: auto">
+                <kbd style="font-size:10px; padding:1px 4px; background:rgba(255,255,255,0.05); border-radius:3px; border:1px solid rgba(255,255,255,0.1)">Cmd+K</kbd>
+                <span>Command Palette</span>
+              </div>
+            </div>
+            <div id="command-palette" class="command-palette hidden">
+              <div class="command-palette-header">
+                <input type="text" class="command-palette-input" placeholder="Search BMAD commands..." autofocus>
+              </div>
+              <div class="command-palette-results"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="terminal-renderer.js"></script>
+</body>
+</html>
