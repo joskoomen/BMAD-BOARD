@@ -239,7 +239,9 @@ function loadXtermModules() {
  * @returns {number} The new tab ID
  */
 async function createTab(slashCommand, opts) {
-  const { claudeSessionId, resume } = opts || {};
+  // Always ensure a claudeSessionId so every session can be resumed
+  const resume = (opts && opts.resume) || false;
+  const claudeSessionId = (opts && opts.claudeSessionId) || (resume ? null : crypto.randomUUID());
   await loadXtermModules();
 
   const TerminalClass = window.Terminal || (window.exports && window.exports.Terminal);
@@ -315,8 +317,8 @@ async function createTab(slashCommand, opts) {
 
   tabs.set(tabId, tab);
 
-  // Save to session history
-  saveTabToHistory(tab, slashCommand, opts);
+  // Save to session history (pass claudeSessionId explicitly since it may be auto-generated)
+  saveTabToHistory(tab, slashCommand, { ...opts, claudeSessionId });
 
   // Wire user input to PTY
   term.onData((data) => {
@@ -360,6 +362,8 @@ async function createTab(slashCommand, opts) {
       cmd = `claude --resume ${claudeSessionId}`;
     } else if (claudeSessionId && slashCommand) {
       cmd = `claude --session-id ${claudeSessionId} "${slashCommand}"`;
+    } else if (claudeSessionId) {
+      cmd = `claude --session-id ${claudeSessionId}`;
     } else if (slashCommand) {
       cmd = `claude "${slashCommand}"`;
     } else {
