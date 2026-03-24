@@ -340,11 +340,11 @@ async function createTab(slashCommand, opts) {
   resizeObserver.observe(containerEl);
   tab._resizeObserver = resizeObserver;
 
-  // Create PTY session
-  await createPtyForTab(tab);
-
-  // Switch to this tab
+  // Switch to this tab FIRST so container is visible and fitAddon can measure
   switchTab(tabId);
+
+  // Now create PTY with the correct fitted dimensions
+  await createPtyForTab(tab);
 
   // Auto-start LLM with command (provider-aware)
   let cmd;
@@ -448,12 +448,12 @@ function switchTab(tabId) {
     showNextStepBar(tab);
   }
 
-  // Fit and focus
+  // Force layout reflow before fitting so dimensions are accurate
   if (tab.fitAddon) {
-    setTimeout(() => {
-      try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      tab.term.focus();
-    }, 50);
+    // Reading offsetHeight forces the browser to calculate layout
+    void tab.containerEl.offsetHeight;
+    try { tab.fitAddon.fit(); } catch { /* ignore */ }
+    tab.term.focus();
   }
 
   updateStatusDot();
