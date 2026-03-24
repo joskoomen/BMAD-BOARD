@@ -1,3 +1,11 @@
+/**
+ * Preload script — exposes a safe `window.api` bridge between the
+ * renderer process and main process via Electron's contextBridge.
+ *
+ * Each method maps to an ipcMain handler in main.js.
+ * Grouped by domain: project, settings, BMAD config, session history,
+ * terminal, and companion server.
+ */
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
@@ -47,6 +55,11 @@ contextBridge.exposeInMainWorld('api', {
   launchPhaseCommand: (opts) => ipcRenderer.invoke('launch-phase-command', opts),
   launchPartyMode: () => ipcRenderer.invoke('launch-party-mode'),
   openTerminal: (command) => ipcRenderer.invoke('open-terminal', command),
+
+  // Companion Server
+  getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),
+  toggleCompanion: (enabled) => ipcRenderer.invoke('companion:toggle', enabled),
+  regenerateCompanionToken: () => ipcRenderer.invoke('companion:regenerate-token'),
 
   // Embedded Terminal (PTY)
   terminalCreate: (opts) => ipcRenderer.invoke('terminal:create', opts || {}),

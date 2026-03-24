@@ -1578,6 +1578,15 @@ async function renderSettings() {
         </div>
       </div>
 
+      <!-- Mobile Companion -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">Mobile Companion</h3>
+        <p class="settings-hint" style="margin-bottom:12px">Access your BMAD Board from your phone. Open the URL below or scan the QR code.</p>
+        <div id="companion-section">
+          <p class="settings-hint">Loading...</p>
+        </div>
+      </div>
+
       <!-- Projects -->
       <div class="settings-section">
         <h3 class="settings-section-title">Projects</h3>
@@ -1618,6 +1627,325 @@ async function renderSettings() {
     });
     bmadSaveBtn.addEventListener('click', saveBmadConfigFromForm);
   }
+
+  // Render companion section
+  renderCompanionSection();
+}
+
+async function renderCompanionSection() {
+  const section = document.getElementById('companion-section');
+  if (!section) return;
+
+  try {
+    const info = await window.api.getCompanionInfo();
+    if (!info.enabled) {
+      section.innerHTML = `
+        <div class="settings-field settings-field-row">
+          <label class="settings-label">Enable companion server</label>
+          <label class="settings-toggle">
+            <input type="checkbox" id="companion-toggle">
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
+      `;
+      document.getElementById('companion-toggle').addEventListener('change', async (e) => {
+        await window.api.toggleCompanion(e.target.checked);
+        renderCompanionSection();
+      });
+      return;
+    }
+
+    const url = info.urls && info.urls[0] ? info.urls[0] : `http://localhost:${info.port}?token=${info.token}`;
+
+    // Generate QR code as SVG using a minimal inline generator
+    const qrSvg = generateQRPlaceholder(url);
+
+    section.innerHTML = `
+      <div class="settings-field settings-field-row">
+        <label class="settings-label">Companion server</label>
+        <label class="settings-toggle">
+          <input type="checkbox" id="companion-toggle" checked>
+          <span class="settings-toggle-slider"></span>
+        </label>
+      </div>
+      <div class="companion-info">
+        <div class="companion-qr" id="companion-qr">
+          ${qrSvg}
+        </div>
+        <div class="companion-details">
+          <div class="companion-url-group">
+            <label class="settings-label-sm">Connection URL</label>
+            <div class="companion-url-row">
+              <input type="text" class="settings-input settings-input-readonly" id="companion-url" value="${url}" readonly>
+              <button class="btn btn-ghost btn-sm" id="btn-copy-url" title="Copy URL">Copy</button>
+            </div>
+          </div>
+          <div class="companion-meta">
+            <span class="settings-hint">Port: ${info.port}</span>
+            ${info.addresses ? `<span class="settings-hint">IP: ${info.addresses.join(', ')}</span>` : ''}
+            <span class="settings-hint">Clients can connect on the same WiFi network</span>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-regen-token" style="margin-top:8px">Regenerate Token</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('companion-toggle').addEventListener('change', async (e) => {
+      await window.api.toggleCompanion(e.target.checked);
+      renderCompanionSection();
+    });
+
+    document.getElementById('btn-copy-url').addEventListener('click', () => {
+      navigator.clipboard.writeText(url).then(() => {
+        const btn = document.getElementById('btn-copy-url');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    });
+
+    document.getElementById('btn-regen-token').addEventListener('click', async () => {
+      await window.api.regenerateCompanionToken();
+      renderCompanionSection();
+    });
+
+  } catch (err) {
+    section.innerHTML = `<p class="settings-hint" style="color:var(--danger)">Failed to load companion info</p>`;
+  }
+}
+
+/**
+ * Generate a QR code for the given URL using a minimal inline generator.
+ * Falls back to a visual placeholder if generation fails.
+ */
+function generateQRPlaceholder(url) {
+  // Minimal QR code generator — produces a data matrix as a table of modules.
+  // Uses alphanumeric mode with error correction level L for short URLs.
+  // For a robust QR, consider a library; this covers typical companion URLs.
+  try {
+    const modules = generateQRMatrix(url);
+    if (modules && modules.length > 0) {
+      const size = modules.length;
+      const scale = Math.max(2, Math.floor(160 / size));
+      const totalSize = size * scale;
+      let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalSize}" height="${totalSize}" viewBox="0 0 ${size} ${size}" style="border-radius:8px;background:white;padding:4px">`;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (modules[y][x]) {
+            svg += `<rect x="${x}" y="${y}" width="1" height="1" fill="#0f0f23"/>`;
+          }
+        }
+      }
+      svg += '</svg>';
+      return svg;
+    }
+  } catch {}
+
+  // Fallback: copy-only instructions (no misleading QR visual)
+  return `
+    <div style="width:160px;height:160px;background:white;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:12px;text-align:center">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0f0f23" stroke-width="1.5">
+        <rect x="9" y="9" width="13" height="13" rx="2"/>
+        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+      </svg>
+      <span style="color:#0f0f23;font-size:10px;margin-top:8px">Copy the URL below<br>and open on your phone</span>
+    </div>
+  `;
+}
+
+/**
+ * Minimal QR code matrix generator (Version 2, ECC-L, byte mode).
+ * Returns a 2D boolean array of modules or null on failure.
+ */
+function generateQRMatrix(text) {
+  const data = new TextEncoder().encode(text);
+  if (data.length > 32) return null; // Version 2 capacity limit
+
+  // Version 2: 25x25 modules, ECC-L: 34 data codewords, 10 EC codewords
+  const version = 2, size = 25;
+  const totalDataCW = 34, ecCW = 10;
+  const dataCW = totalDataCW - ecCW; // 24 usable after EC
+
+  // Build data bitstream: mode(4) + count(8) + data + terminator + padding
+  let bits = '';
+  bits += '0100'; // Byte mode indicator
+  bits += data.length.toString(2).padStart(8, '0'); // Character count
+  for (const b of data) bits += b.toString(2).padStart(8, '0');
+  bits += '0000'; // Terminator
+  while (bits.length % 8 !== 0) bits += '0';
+  while (bits.length < dataCW * 8) {
+    bits += '11101100'; // Pad byte 0xEC
+    if (bits.length < dataCW * 8) bits += '00010001'; // Pad byte 0x11
+  }
+
+  const codewords = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    codewords.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+
+  // Reed-Solomon error correction (GF(2^8) with primitive poly 0x11d)
+  const ec = reedSolomon(codewords, ecCW);
+  const allCW = [...codewords, ...ec];
+
+  // Initialize module grid
+  const grid = Array.from({ length: size }, () => Array(size).fill(null));
+  const reserved = Array.from({ length: size }, () => Array(size).fill(false));
+
+  // Place finder patterns
+  placeFinder(grid, reserved, 0, 0);
+  placeFinder(grid, reserved, size - 7, 0);
+  placeFinder(grid, reserved, 0, size - 7);
+
+  // Place alignment pattern (version 2: center at 18,18)
+  placeAlignment(grid, reserved, 18, 18);
+
+  // Timing patterns
+  for (let i = 8; i < size - 8; i++) {
+    grid[6][i] = i % 2 === 0; reserved[6][i] = true;
+    grid[i][6] = i % 2 === 0; reserved[i][6] = true;
+  }
+
+  // Dark module + reserved format info areas
+  grid[size - 8][8] = true; reserved[size - 8][8] = true;
+  reserveFormatArea(reserved, size);
+
+  // Place data bits
+  placeData(grid, reserved, allCW, size);
+
+  // Apply mask 0 (checkerboard: (row + col) % 2 === 0)
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (!reserved[r][c]) {
+        if ((r + c) % 2 === 0) grid[r][c] = !grid[r][c];
+      }
+    }
+  }
+
+  // Place format info (mask 0, ECC-L)
+  // Pre-computed: ECC-L + mask 0 => format bits 111011111000100
+  const formatBits = '111011111000100';
+  placeFormatInfo(grid, formatBits, size);
+
+  return grid;
+}
+
+function placeFinder(grid, reserved, row, col) {
+  const pattern = [
+    [1,1,1,1,1,1,1],
+    [1,0,0,0,0,0,1],
+    [1,0,1,1,1,0,1],
+    [1,0,1,1,1,0,1],
+    [1,0,1,1,1,0,1],
+    [1,0,0,0,0,0,1],
+    [1,1,1,1,1,1,1]
+  ];
+  for (let r = -1; r <= 7; r++) {
+    for (let c = -1; c <= 7; c++) {
+      const gr = row + r, gc = col + c;
+      if (gr < 0 || gr >= grid.length || gc < 0 || gc >= grid.length) continue;
+      if (r >= 0 && r < 7 && c >= 0 && c < 7) {
+        grid[gr][gc] = !!pattern[r][c];
+      } else {
+        grid[gr][gc] = false; // Separator
+      }
+      reserved[gr][gc] = true;
+    }
+  }
+}
+
+function placeAlignment(grid, reserved, centerR, centerC) {
+  for (let r = -2; r <= 2; r++) {
+    for (let c = -2; c <= 2; c++) {
+      const gr = centerR + r, gc = centerC + c;
+      grid[gr][gc] = Math.abs(r) === 2 || Math.abs(c) === 2 || (r === 0 && c === 0);
+      reserved[gr][gc] = true;
+    }
+  }
+}
+
+function reserveFormatArea(reserved, size) {
+  for (let i = 0; i < 8; i++) {
+    reserved[8][i] = true; reserved[8][size - 1 - i] = true;
+    reserved[i][8] = true; reserved[size - 1 - i][8] = true;
+  }
+  reserved[8][8] = true;
+}
+
+function placeFormatInfo(grid, bits, size) {
+  const positions1 = [[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
+  const positions2 = [[size-1,8],[size-2,8],[size-3,8],[size-4,8],[size-5,8],[size-6,8],[size-7,8],[8,size-8],[8,size-7],[8,size-6],[8,size-5],[8,size-4],[8,size-3],[8,size-2],[8,size-1]];
+  for (let i = 0; i < 15; i++) {
+    const bit = bits[i] === '1';
+    grid[positions1[i][0]][positions1[i][1]] = bit;
+    grid[positions2[i][0]][positions2[i][1]] = bit;
+  }
+}
+
+function placeData(grid, reserved, codewords, size) {
+  let bitIdx = 0;
+  const totalBits = codewords.length * 8;
+  let col = size - 1;
+  let goingUp = true;
+
+  while (col >= 0) {
+    if (col === 6) col--; // Skip timing column
+    const rows = goingUp ? Array.from({ length: size }, (_, i) => size - 1 - i) : Array.from({ length: size }, (_, i) => i);
+    for (const row of rows) {
+      for (const dc of [0, -1]) {
+        const c = col + dc;
+        if (c < 0 || reserved[row][c]) continue;
+        if (bitIdx < totalBits) {
+          const byteIdx = Math.floor(bitIdx / 8);
+          const bitPos = 7 - (bitIdx % 8);
+          grid[row][c] = !!((codewords[byteIdx] >> bitPos) & 1);
+          bitIdx++;
+        } else {
+          grid[row][c] = false;
+        }
+      }
+    }
+    col -= 2;
+    goingUp = !goingUp;
+  }
+}
+
+function reedSolomon(data, ecCount) {
+  // Generator polynomial coefficients for ecCount error correction codewords
+  const gfExp = new Uint8Array(512);
+  const gfLog = new Uint8Array(256);
+  let v = 1;
+  for (let i = 0; i < 255; i++) {
+    gfExp[i] = v;
+    gfLog[v] = i;
+    v <<= 1;
+    if (v >= 256) v ^= 0x11d;
+  }
+  for (let i = 255; i < 512; i++) gfExp[i] = gfExp[i - 255];
+
+  const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : gfExp[gfLog[a] + gfLog[b]];
+
+  // Build generator polynomial
+  let gen = [1];
+  for (let i = 0; i < ecCount; i++) {
+    const newGen = new Array(gen.length + 1).fill(0);
+    for (let j = 0; j < gen.length; j++) {
+      newGen[j] ^= gen[j];
+      newGen[j + 1] ^= gfMul(gen[j], gfExp[i]);
+    }
+    gen = newGen;
+  }
+
+  // Polynomial division
+  const result = new Uint8Array(ecCount);
+  const msg = [...data, ...result];
+  for (let i = 0; i < data.length; i++) {
+    const coef = msg[i];
+    if (coef !== 0) {
+      for (let j = 0; j < gen.length; j++) {
+        msg[i + j] ^= gfMul(gen[j], coef);
+      }
+    }
+  }
+  return msg.slice(data.length);
 }
 
 async function saveSettingsFromForm() {
@@ -1629,6 +1957,9 @@ async function saveSettingsFromForm() {
       extraArgs: document.getElementById(`llm-args-${p.key}`)?.value || ''
     };
   }
+
+  // Preserve existing companion state so it isn't overwritten
+  const existingSettings = await window.api.getSettings();
 
   const settings = {
     defaultLlm: document.getElementById('settings-default-llm')?.value || 'claude',
@@ -1646,6 +1977,11 @@ async function saveSettingsFromForm() {
       pollInterval: parseInt(document.getElementById('settings-notif-poll')?.value) || 30
     }
   };
+
+  // Merge companion state from existing settings
+  if (existingSettings?.companion) {
+    settings.companion = existingSettings.companion;
+  }
 
   await window.api.saveSettings(settings);
 
