@@ -245,10 +245,13 @@ async function createTab(slashCommand, opts) {
   await loadXtermModules();
 
   const TerminalClass = window.Terminal || (window.exports && window.exports.Terminal);
-  if (!TerminalClass) { console.error('xterm Terminal class not found'); return null; }
+  if (!TerminalClass) {
+    console.error('xterm Terminal class not found');
+    return null;
+  }
 
   const tabId = nextTabId++;
-  const tabInfo = (opts && opts.clean) ? { emoji: '$', label: 'Shell' } : getTabInfo(slashCommand);
+  const tabInfo = (opts && opts.clean) ? {emoji: '$', label: 'Shell'} : getTabInfo(slashCommand);
   if (resume) tabInfo.label += ' \u21BB';
 
   // Create xterm instance
@@ -318,7 +321,7 @@ async function createTab(slashCommand, opts) {
   tabs.set(tabId, tab);
 
   // Save to session history (pass claudeSessionId explicitly since it may be auto-generated)
-  saveTabToHistory(tab, slashCommand, { ...opts, claudeSessionId });
+  saveTabToHistory(tab, slashCommand, {...opts, claudeSessionId});
 
   // Wire user input to PTY
   term.onData((data) => {
@@ -327,7 +330,7 @@ async function createTab(slashCommand, opts) {
     }
   });
 
-  term.onResize(({ cols, rows }) => {
+  term.onResize(({cols, rows}) => {
     if (tab.sessionId !== null) {
       window.api.terminalResize(tab.sessionId, cols, rows);
     }
@@ -336,7 +339,10 @@ async function createTab(slashCommand, opts) {
   // Resize observer
   const resizeObserver = new ResizeObserver(() => {
     if (tab.fitAddon && tab.term && tab.id === activeTabId) {
-      try { tab.fitAddon.fit(); } catch { /* ignore */ }
+      try {
+        tab.fitAddon.fit();
+      } catch { /* ignore */
+      }
     }
   });
   resizeObserver.observe(containerEl);
@@ -348,46 +354,48 @@ async function createTab(slashCommand, opts) {
   // Now create PTY with the correct fitted dimensions
   await createPtyForTab(tab);
 
-    if (!(opts && opts.clean)) {
-  // Auto-start LLM with command (provider-aware)
-  let cmd;
-  let provider = (opts && opts.provider) || null;
-  if (!provider) {
-    try {
-      const settings = await window.api.getSettings();
-      provider = (settings && settings.defaultLlm) || 'claude';
-    } catch { provider = 'claude'; }
-  }
-  if (provider === 'claude') {
-    if (resume && claudeSessionId) {
-      cmd = `claude --resume ${claudeSessionId}`;
-    } else if (claudeSessionId && slashCommand) {
-      cmd = `claude --session-id ${claudeSessionId} "${slashCommand}"`;
-    } else if (claudeSessionId) {
-      cmd = `claude --session-id ${claudeSessionId}`;
-    } else if (slashCommand) {
-      cmd = `claude "${slashCommand}"`;
-    } else {
-      cmd = 'claude';
+  if (!(opts && opts.clean)) {
+    // Auto-start LLM with command (provider-aware)
+    let cmd;
+    let provider = (opts && opts.provider) || null;
+    if (!provider) {
+      try {
+        const settings = await window.api.getSettings();
+        provider = (settings && settings.defaultLlm) || 'claude';
+      } catch {
+        provider = 'claude';
+      }
     }
-  } else if (provider === 'codex') {
-    if (slashCommand) {
-      cmd = `codex "${slashCommand}"`;
+    if (provider === 'claude') {
+      if (resume && claudeSessionId) {
+        cmd = `claude --resume ${claudeSessionId}`;
+      } else if (claudeSessionId && slashCommand) {
+        cmd = `claude --session-id ${claudeSessionId} "${slashCommand}"`;
+      } else if (claudeSessionId) {
+        cmd = `claude --session-id ${claudeSessionId}`;
+      } else if (slashCommand) {
+        cmd = `claude "${slashCommand}"`;
+      } else {
+        cmd = 'claude';
+      }
+    } else if (provider === 'codex') {
+      if (slashCommand) {
+        cmd = `codex "${slashCommand}"`;
+      } else {
+        cmd = 'codex';
+      }
+    } else if (provider === 'cursor') {
+      cmd = slashCommand ? `cursor "${slashCommand}"` : 'cursor .';
+    } else if (provider === 'aider') {
+      cmd = slashCommand ? `aider --message "${slashCommand}"` : 'aider';
+    } else if (provider === 'opencode') {
+      cmd = slashCommand ? `opencode "${slashCommand}"` : 'opencode';
     } else {
-      cmd = 'codex';
+      cmd = slashCommand ? `claude "${slashCommand}"` : 'claude';
     }
-  } else if (provider === 'cursor') {
-    cmd = slashCommand ? `cursor "${slashCommand}"` : 'cursor .';
-  } else if (provider === 'aider') {
-    cmd = slashCommand ? `aider --message "${slashCommand}"` : 'aider';
-  } else if (provider === 'opencode') {
-    cmd = slashCommand ? `opencode "${slashCommand}"` : 'opencode';
-  } else {
-    cmd = slashCommand ? `claude "${slashCommand}"` : 'claude';
-  }
-  setTimeout(() => {
-    if (tab.sessionId !== null) {
-      window.api.terminalInput(tab.sessionId, cmd + '\r');
+    setTimeout(() => {
+      if (tab.sessionId !== null) {
+        window.api.terminalInput(tab.sessionId, cmd + '\r');
     }
   }, 500);
 }
