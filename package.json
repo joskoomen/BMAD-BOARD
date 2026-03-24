@@ -64,7 +64,13 @@
       "!node_modules/.cache",
       "!dist/"
     ],
-    "extraResources": [],
+    "extraResources": [
+      {
+        "from": "companion/",
+        "to": "companion/",
+        "filter": ["**/*"]
+      }
+    ],
     "asar": true
   },
   "dependencies": {

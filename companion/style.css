@@ -381,6 +381,37 @@ html, body {
 .phase-pill[data-phase="review"] { background: rgba(139,92,246,0.2); color: var(--phase-review); }
 .phase-pill[data-phase="done"] { background: rgba(16,185,129,0.2); color: var(--phase-done); }
 
+/* ── Story Actions ────────────────────────────────────────────────────── */
+
+.story-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn-advance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.btn-advance:active {
+  background: var(--accent-hover);
+}
+
+.btn-advance svg {
+  flex-shrink: 0;
+}
+
 /* ── Terminal ────────────────────────────────────────────────────────── */
 
 #view-terminal {
@@ -394,6 +425,34 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  min-height: 32px;
+}
+
+.btn-mode {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+
+.btn-mode:active {
+  background: var(--accent);
+  color: white;
 }
 
 #terminal-output {

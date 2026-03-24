@@ -2,7 +2,8 @@
  * BMAD Board Companion — Mobile PWA Client
  *
  * Connects to the desktop Electron app via HTTP REST + WebSocket.
- * Provides epic/story dashboard and terminal access.
+ * Provides epic/story dashboard, terminal access, desktop terminal sharing,
+ * story phase management, and push notifications.
  */
 
 // ── State ───────────────────────────────────────────────────────────────
@@ -18,6 +19,10 @@ let reconnectTimer = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
+// Desktop terminal sharing state
+let watchingSharedTerminal = null;
+let sharedTerminalSessions = [];
+
 const PHASES = {
   'backlog':       { label: 'Backlog',     icon: '\u25CB', color: 'var(--phase-backlog)' },
   'ready-for-dev': { label: 'Ready',       icon: '\u25D0', color: 'var(--phase-ready)' },
@@ -25,6 +30,8 @@ const PHASES = {
   'review':        { label: 'Review',      icon: '\u25D5', color: 'var(--phase-review)' },
   'done':          { label: 'Done',        icon: '\u25CF', color: 'var(--phase-done)' }
 };
+
+const PHASE_ORDER = ['backlog', 'ready-for-dev', 'in-progress', 'review', 'done'];
 
 // ── Init ────────────────────────────────────────────────────────────────
 
@@ -36,7 +43,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      // Listen for push notification clicks
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'notification-click') {
+          handleNotificationClick(event.data);
+        }
+      });
+    }).catch(() => {});
   }
 }
 
@@ -67,6 +81,9 @@ function setupEventListeners() {
     if (e.key === 'Enter') sendTerminalInput();
   });
   document.getElementById('btn-send').addEventListener('click', sendTerminalInput);
+
+  // Terminal mode toggle (own vs shared)
+  document.getElementById('btn-terminal-mode').addEventListener('click', toggleTerminalMode);
 }
 
 // ── Auto-connect ────────────────────────────────────────────────────────
@@ -135,6 +152,9 @@ async function connect() {
     // Load project data
     await loadProject();
 
+    // Request notification permission
+    requestNotificationPermission();
+
     setConnectionState('connected');
     showDashboard();
   } catch (err) {
@@ -157,6 +177,8 @@ function connectWebSocket() {
     console.log('[companion] WebSocket connected');
     reconnectAttempts = 0;
     setConnectionState('connected');
+    // Request list of shared desktop terminals
+    ws.send(JSON.stringify({ type: 'terminal:list-shared' }));
   };
 
   ws.onmessage = (event) => {
@@ -210,6 +232,36 @@ function handleWSMessage(msg) {
     case 'terminal:exit':
       appendTerminalLine(`--- Session exited (code ${msg.data.exitCode}) ---`, 'ansi-dim');
       terminalSessionId = null;
+      break;
+
+    // Desktop terminal sharing
+    case 'terminal:shared-data':
+      if (currentView === 'terminal' && isSharedMode()) {
+        appendTerminalData(msg.data.data);
+      }
+      break;
+
+    case 'terminal:shared-exit':
+      if (currentView === 'terminal' && isSharedMode()) {
+        appendTerminalLine(`--- Desktop session exited (code ${msg.data.exitCode}) ---`, 'ansi-dim');
+        watchingSharedTerminal = null;
+      }
+      showLocalNotification('Terminal Exited', `Desktop session ended with code ${msg.data.exitCode}`);
+      break;
+
+    case 'terminal:shared-list':
+      sharedTerminalSessions = msg.data.sessions || [];
+      updateTerminalModeIndicator();
+      break;
+
+    // Story phase advance
+    case 'story:advanced':
+      showToast(`${msg.data.slug}: ${msg.data.oldPhase} \u2192 ${msg.data.newPhase}`);
+      break;
+
+    // Notifications from server
+    case 'notification':
+      showLocalNotification(msg.data.title, msg.data.body);
       break;
 
     case 'pong':
@@ -281,8 +333,11 @@ function showEpicDetail(epicNumber) {
 
 function showTerminal() {
   showView('terminal');
-  // Create terminal session if none exists
-  if (!terminalSessionId && ws && ws.readyState === WebSocket.OPEN) {
+  // If shared terminals available, default to shared mode
+  if (sharedTerminalSessions.length > 0 && !terminalSessionId && !watchingSharedTerminal) {
+    setSharedMode(true);
+    watchSharedTerminal(sharedTerminalSessions[0].id);
+  } else if (!terminalSessionId && !isSharedMode() && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'terminal:create', data: { cols: 80, rows: 24 } }));
   }
   // Focus input
@@ -298,6 +353,7 @@ function handleBack() {
 function handleRefresh() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'project:refresh' }));
+    ws.send(JSON.stringify({ type: 'terminal:list-shared' }));
     showToast('Refreshing...');
   }
 }
@@ -360,18 +416,133 @@ function renderEpicDetail() {
   for (const story of epic.stories) {
     const card = document.createElement('div');
     card.className = 'story-card';
+
+    const canAdvance = story.status !== 'done';
+    const nextPhase = canAdvance ? PHASE_ORDER[PHASE_ORDER.indexOf(story.status) + 1] : null;
+
     card.innerHTML = `
       <div class="story-number">Story ${story.storyNumber}</div>
       <div class="story-header">
         <span class="story-title">${esc(story.title)}</span>
         <span class="phase-pill" data-phase="${story.status}">${PHASES[story.status]?.label || story.status}</span>
       </div>
+      ${canAdvance ? `
+        <div class="story-actions">
+          <button class="btn-advance" data-slug="${story.slug}" data-next="${nextPhase}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            ${PHASES[nextPhase]?.label || nextPhase}
+          </button>
+        </div>
+      ` : ''}
     `;
+
+    // Wire advance button
+    const advBtn = card.querySelector('.btn-advance');
+    if (advBtn) {
+      advBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        advanceStory(story.slug);
+      });
+    }
+
     list.appendChild(card);
   }
 }
 
+// ── Story Phase Advance ─────────────────────────────────────────────────
+
+function advanceStory(slug) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast('Not connected');
+    return;
+  }
+
+  // Confirm on mobile
+  const story = findStory(slug);
+  if (!story) return;
+
+  const currentIdx = PHASE_ORDER.indexOf(story.status);
+  if (currentIdx < 0 || currentIdx >= PHASE_ORDER.length - 1) return;
+
+  const nextPhase = PHASE_ORDER[currentIdx + 1];
+  const confirmed = confirm(`Move "${story.title}" to ${PHASES[nextPhase]?.label || nextPhase}?`);
+  if (!confirmed) return;
+
+  ws.send(JSON.stringify({
+    type: 'story:advance',
+    data: { slug }
+  }));
+
+  showToast('Advancing...');
+}
+
+function findStory(slug) {
+  for (const epic of (projectData?.epics || [])) {
+    const story = epic.stories.find(s => s.slug === slug);
+    if (story) return story;
+  }
+  return null;
+}
+
 // ── Terminal ────────────────────────────────────────────────────────────
+
+let terminalMode = 'own'; // 'own' or 'shared'
+
+function isSharedMode() {
+  return terminalMode === 'shared';
+}
+
+function setSharedMode(shared) {
+  terminalMode = shared ? 'shared' : 'own';
+  const btn = document.getElementById('btn-terminal-mode');
+  btn.textContent = shared ? 'Desktop' : 'Own';
+  btn.title = shared ? 'Watching desktop terminal' : 'Own terminal session';
+
+  // Show/hide input row based on mode
+  const inputRow = document.querySelector('.terminal-input-row');
+  if (inputRow) {
+    inputRow.style.display = shared ? 'none' : 'flex';
+  }
+}
+
+function toggleTerminalMode() {
+  if (isSharedMode()) {
+    // Switch to own terminal
+    setSharedMode(false);
+    watchingSharedTerminal = null;
+    clearTerminalOutput();
+    if (!terminalSessionId && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'terminal:create', data: { cols: 80, rows: 24 } }));
+    }
+  } else {
+    // Switch to shared desktop terminal
+    if (sharedTerminalSessions.length === 0) {
+      showToast('No active desktop terminal to watch');
+      return;
+    }
+    setSharedMode(true);
+    clearTerminalOutput();
+    watchSharedTerminal(sharedTerminalSessions[0].id);
+  }
+}
+
+function watchSharedTerminal(sessionId) {
+  watchingSharedTerminal = sessionId;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'terminal:watch', data: { id: sessionId } }));
+  }
+}
+
+function updateTerminalModeIndicator() {
+  const btn = document.getElementById('btn-terminal-mode');
+  if (sharedTerminalSessions.length > 0) {
+    btn.classList.remove('hidden');
+  }
+}
+
+function clearTerminalOutput() {
+  document.getElementById('terminal-output').innerHTML = '';
+}
 
 function sendTerminalInput() {
   const input = document.getElementById('terminal-input');
@@ -414,6 +585,52 @@ function stripAnsi(str) {
             .replace(/\x1b\][^\x07]*\x07/g, '')   // OSC sequences
             .replace(/\x1b[()][AB012]/g, '')         // Character set
             .replace(/\r/g, '');
+}
+
+// ── Notifications ───────────────────────────────────────────────────────
+
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function showLocalNotification(title, body) {
+  // In-app toast
+  showToast(`${title}: ${body}`);
+
+  // OS notification if permitted and app is in background
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    try {
+      const notification = new Notification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: 'bmad-companion',
+        renotify: true
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    } catch {
+      // Notification constructor may not work in all contexts
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'show-notification',
+          title,
+          body
+        });
+      }
+    }
+  }
+}
+
+function handleNotificationClick(data) {
+  // Navigate to relevant view when notification is clicked
+  if (data.view === 'terminal') {
+    showTerminal();
+  }
 }
 
 // ── UI Helpers ──────────────────────────────────────────────────────────

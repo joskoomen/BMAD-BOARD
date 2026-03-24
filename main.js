@@ -92,6 +92,9 @@ async function startCompanionServer() {
     },
     buildCommand: (phase, storySlug, storyFilePath) => {
       return buildClaudeCommand(phase, storySlug, storyFilePath);
+    },
+    updateStoryStatus: (projectPath, slug, newPhase) => {
+      updateStoryStatusInYaml(projectPath, slug, newPhase);
     }
   });
 
@@ -102,6 +105,34 @@ async function startCompanionServer() {
   } catch (err) {
     console.error('[companion] Failed to start server:', err.message);
   }
+}
+
+// ── Story Status Update in YAML ────────────────────────────────────────
+
+function updateStoryStatusInYaml(projectPath, slug, newPhase) {
+  const implDir = path.join(projectPath, '_bmad-output', 'implementation');
+  const candidates = [
+    path.join(implDir, 'sprint-status.yaml'),
+    path.join(projectPath, '_bmad-output', 'sprint-status.yaml')
+  ];
+
+  // Also check config-driven paths
+  const data = scanProject(projectPath);
+  if (data.config?.implementationArtifacts) {
+    candidates.unshift(path.join(data.config.implementationArtifacts, 'sprint-status.yaml'));
+  }
+
+  const filePath = candidates.find(p => fs.existsSync(p));
+  if (!filePath) throw new Error('sprint-status.yaml not found');
+
+  let content = fs.readFileSync(filePath, 'utf-8');
+  const regex = new RegExp(`^(\\s*${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*)(.+)$`, 'm');
+  const match = content.match(regex);
+
+  if (!match) throw new Error(`Story "${slug}" not found in sprint-status.yaml`);
+
+  content = content.replace(regex, `$1${newPhase}`);
+  fs.writeFileSync(filePath, content, 'utf-8');
 }
 
 ipcMain.handle('new-window', () => {
@@ -240,10 +271,18 @@ ipcMain.handle('terminal:create', (event, { cols, rows }) => {
       if (!senderContents.isDestroyed()) {
         senderContents.send('terminal:data', { id: sessionId, data });
       }
+      // Share with companion clients
+      if (companionServer) {
+        companionServer.shareTerminalData(sessionId, data);
+      }
     },
     onExit: (sessionId, exitCode) => {
       if (!senderContents.isDestroyed()) {
         senderContents.send('terminal:exit', { id: sessionId, exitCode });
+      }
+      // Share with companion clients
+      if (companionServer) {
+        companionServer.shareTerminalExit(sessionId, exitCode);
       }
     }
   });
