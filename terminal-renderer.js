@@ -246,7 +246,7 @@ async function createTab(slashCommand, opts) {
   if (!TerminalClass) { console.error('xterm Terminal class not found'); return null; }
 
   const tabId = nextTabId++;
-  const tabInfo = getTabInfo(slashCommand);
+  const tabInfo = (opts && opts.clean) ? { emoji: '$', label: 'Shell' } : getTabInfo(slashCommand);
   if (resume) tabInfo.label += ' \u21BB';
 
   // Create xterm instance
@@ -346,45 +346,47 @@ async function createTab(slashCommand, opts) {
   // Switch to this tab
   switchTab(tabId);
 
-  // Auto-start LLM with command (provider-aware)
-  let cmd;
-  let provider = (opts && opts.provider) || null;
-  if (!provider) {
-    try {
-      const settings = await window.api.getSettings();
-      provider = (settings && settings.defaultLlm) || 'claude';
-    } catch { provider = 'claude'; }
-  }
-  if (provider === 'claude') {
-    if (resume && claudeSessionId) {
-      cmd = `claude --resume ${claudeSessionId}`;
-    } else if (claudeSessionId && slashCommand) {
-      cmd = `claude --session-id ${claudeSessionId} "${slashCommand}"`;
-    } else if (slashCommand) {
-      cmd = `claude "${slashCommand}"`;
+  // Auto-start LLM with command (provider-aware) — skip for clean terminals
+  if (!(opts && opts.clean)) {
+    let cmd;
+    let provider = (opts && opts.provider) || null;
+    if (!provider) {
+      try {
+        const settings = await window.api.getSettings();
+        provider = (settings && settings.defaultLlm) || 'claude';
+      } catch { provider = 'claude'; }
+    }
+    if (provider === 'claude') {
+      if (resume && claudeSessionId) {
+        cmd = `claude --resume ${claudeSessionId}`;
+      } else if (claudeSessionId && slashCommand) {
+        cmd = `claude --session-id ${claudeSessionId} "${slashCommand}"`;
+      } else if (slashCommand) {
+        cmd = `claude "${slashCommand}"`;
+      } else {
+        cmd = 'claude';
+      }
+    } else if (provider === 'codex') {
+      if (slashCommand) {
+        cmd = `codex "${slashCommand}"`;
+      } else {
+        cmd = 'codex';
+      }
+    } else if (provider === 'cursor') {
+      cmd = slashCommand ? `cursor "${slashCommand}"` : 'cursor .';
+    } else if (provider === 'aider') {
+      cmd = slashCommand ? `aider --message "${slashCommand}"` : 'aider';
+    } else if (provider === 'opencode') {
+      cmd = slashCommand ? `opencode "${slashCommand}"` : 'opencode';
     } else {
-      cmd = 'claude';
+      cmd = slashCommand ? `claude "${slashCommand}"` : 'claude';
     }
-  } else if (provider === 'codex') {
-    if (slashCommand) {
-      cmd = `codex "${slashCommand}"`;
-    } else {
-      cmd = 'codex';
-    }
-  } else if (provider === 'cursor') {
-    cmd = slashCommand ? `cursor "${slashCommand}"` : 'cursor .';
-  } else if (provider === 'aider') {
-    cmd = slashCommand ? `aider --message "${slashCommand}"` : 'aider';
-  } else if (provider === 'opencode') {
-    cmd = slashCommand ? `opencode "${slashCommand}"` : 'opencode';
-  } else {
-    cmd = slashCommand ? `claude "${slashCommand}"` : 'claude';
+    setTimeout(() => {
+      if (tab.sessionId !== null) {
+        window.api.terminalInput(tab.sessionId, cmd + '\r');
+      }
+    }, 500);
   }
-  setTimeout(() => {
-    if (tab.sessionId !== null) {
-      window.api.terminalInput(tab.sessionId, cmd + '\r');
-    }
-  }, 500);
 
   renderTabs();
   return tabId;
@@ -512,6 +514,7 @@ function renderTabs() {
     `;
   }
   html += `<button class="terminal-new-tab" onclick="newTerminalTab()" title="New terminal tab (Cmd+T)">+</button>`;
+  html += `<button class="terminal-new-tab terminal-clean-tab" onclick="newCleanTerminalTab()" title="New clean shell (no LLM)">$</button>`;
   container.innerHTML = html;
 }
 
@@ -519,6 +522,7 @@ function renderTabs() {
 window.switchTerminalTab = function(tabId) { switchTab(tabId); };
 window.closeTerminalTab = function(tabId) { closeTab(tabId); };
 window.newTerminalTab = function() { createTab(null); };
+window.newCleanTerminalTab = function() { createTab(null, { clean: true }); };
 
 // ── Active Stories Tracking ─────────────────────────────────────────────────
 
@@ -1014,17 +1018,17 @@ document.addEventListener('keydown', (e) => {
     }
   }
 
-  // Cmd+T = New terminal tab (when in terminal view)
-  if ((e.metaKey || e.ctrlKey) && e.key === 't' && currentView === 'terminal') {
+  // Cmd+T = New terminal tab (handled by menu accelerator + onNewTerminalTab listener)
+  if ((e.metaKey || e.ctrlKey) && e.key === 't') {
     e.preventDefault();
+    if (currentView !== 'terminal') {
+      const sv = window.showView || function() {};
+      sv('terminal');
+    }
     createTab(null);
   }
 
-  // Cmd+W = Close active tab (when in terminal view)
-  if ((e.metaKey || e.ctrlKey) && e.key === 'w' && currentView === 'terminal') {
-    e.preventDefault();
-    if (activeTabId) closeTab(activeTabId);
-  }
+  // Cmd+W is handled by the application menu — see onCloseActiveTab listener below
 });
 
 // ── Terminal Initialization (called once when terminal view is first shown) ──
@@ -1046,6 +1050,24 @@ async function initTerminal() {
   window._pendingTerminalOpts = null;
   await createTab(pending || null, pendingOpts || undefined);
 }
+
+// ── Menu shortcut: Cmd+W close active terminal tab ───────────────────────────
+
+window.api.onCloseActiveTab(() => {
+  if (typeof currentView !== 'undefined' && currentView === 'terminal' && activeTabId) {
+    closeTab(activeTabId);
+  }
+});
+
+// ── Menu shortcut: Cmd+T new terminal tab ────────────────────────────────────
+
+window.api.onNewTerminalTab(() => {
+  if (currentView !== 'terminal') {
+    const sv = window.showView || function() {};
+    sv('terminal');
+  }
+  createTab(null);
+});
 
 // ── Integration with main app.js view system ─────────────────────────────────
 

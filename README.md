@@ -28,7 +28,7 @@ Visual dashboard for [BMAD-method](https://github.com/bmad-method) projects. Man
 ### Install
 
 ```bash
-git clone https://github.com/your-username/bmad-board.git
+git clone https://github.com/joskoomen/bmad-board.git
 cd bmad-board
 npm install
 ```

@@ -211,11 +211,16 @@ function setupKeyboardShortcuts() {
       e.preventDefault();
       refreshProject();
     }
-    // Cmd+Shift+N = new window
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'N') {
+    // Cmd+N = new window (handled by menu accelerator, but keep as fallback)
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'n') {
       e.preventDefault();
       window.api.newWindow();
     }
+  });
+
+  // Cmd+, = Settings (from menu)
+  window.api.onShowSettings(() => {
+    showView('settings');
   });
 }
 
