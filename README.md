@@ -3,7 +3,7 @@
 Visual dashboard for [BMAD-method](https://github.com/bmad-method) projects. Manage epics, track stories through development phases, and launch LLM-powered workflows — all from a single Electron app with an embedded terminal.
 
 ![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)
-![License](https://img.shields.io/badge/license-UNLICENSED-red)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 
 ## Features
 
@@ -103,4 +103,4 @@ Jos Koomen
 
 ## License
 
-UNLICENSED — Private project.
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
