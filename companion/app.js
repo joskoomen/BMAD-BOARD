@@ -190,6 +190,7 @@ function connectWebSocket() {
 
   ws.onclose = () => {
     console.log('[companion] WebSocket closed');
+    terminalSessionId = null;
     setConnectionState('disconnected');
     scheduleReconnect();
   };
@@ -380,21 +381,54 @@ function renderDashboard() {
     const totalCount = epic.stories.length;
     const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
 
-    card.innerHTML = `
-      <div class="epic-card-header">
-        <span class="epic-number">EPIC ${epic.number}</span>
-        <span class="phase-pill" data-phase="${epic.status}">${PHASES[epic.status]?.label || epic.status}</span>
-      </div>
-      <div class="epic-card-title">${esc(epic.title)}</div>
-      <div class="epic-progress">
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <span class="progress-text">${doneCount}/${totalCount}</span>
-      </div>
-      <div class="phase-summary">
-        ${epic.stories.map(s => `<div class="phase-dot" style="background:${PHASES[s.status]?.color || 'var(--phase-backlog)'}" title="${s.title}"></div>`).join('')}
-      </div>
-    `;
+    // Header
+    const header = document.createElement('div');
+    header.className = 'epic-card-header';
+    const epicNum = document.createElement('span');
+    epicNum.className = 'epic-number';
+    epicNum.textContent = `EPIC ${epic.number}`;
+    const pill = document.createElement('span');
+    pill.className = 'phase-pill';
+    pill.setAttribute('data-phase', epic.status);
+    pill.textContent = PHASES[epic.status]?.label || epic.status;
+    header.appendChild(epicNum);
+    header.appendChild(pill);
 
+    // Title
+    const title = document.createElement('div');
+    title.className = 'epic-card-title';
+    title.textContent = epic.title;
+
+    // Progress
+    const progress = document.createElement('div');
+    progress.className = 'epic-progress';
+    const bar = document.createElement('div');
+    bar.className = 'progress-bar';
+    const fill = document.createElement('div');
+    fill.className = 'progress-fill';
+    fill.style.width = `${pct}%`;
+    bar.appendChild(fill);
+    const pText = document.createElement('span');
+    pText.className = 'progress-text';
+    pText.textContent = `${doneCount}/${totalCount}`;
+    progress.appendChild(bar);
+    progress.appendChild(pText);
+
+    // Phase dots
+    const summary = document.createElement('div');
+    summary.className = 'phase-summary';
+    for (const s of epic.stories) {
+      const dot = document.createElement('div');
+      dot.className = 'phase-dot';
+      dot.style.background = PHASES[s.status]?.color || 'var(--phase-backlog)';
+      dot.title = s.title;
+      summary.appendChild(dot);
+    }
+
+    card.appendChild(header);
+    card.appendChild(title);
+    card.appendChild(progress);
+    card.appendChild(summary);
     grid.appendChild(card);
   }
 }
@@ -420,29 +454,41 @@ function renderEpicDetail() {
     const canAdvance = story.status !== 'done';
     const nextPhase = canAdvance ? PHASE_ORDER[PHASE_ORDER.indexOf(story.status) + 1] : null;
 
-    card.innerHTML = `
-      <div class="story-number">Story ${story.storyNumber}</div>
-      <div class="story-header">
-        <span class="story-title">${esc(story.title)}</span>
-        <span class="phase-pill" data-phase="${story.status}">${PHASES[story.status]?.label || story.status}</span>
-      </div>
-      ${canAdvance ? `
-        <div class="story-actions">
-          <button class="btn-advance" data-slug="${story.slug}" data-next="${nextPhase}">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-            ${PHASES[nextPhase]?.label || nextPhase}
-          </button>
-        </div>
-      ` : ''}
-    `;
+    // Story number
+    const num = document.createElement('div');
+    num.className = 'story-number';
+    num.textContent = `Story ${story.storyNumber}`;
 
-    // Wire advance button
-    const advBtn = card.querySelector('.btn-advance');
-    if (advBtn) {
-      advBtn.addEventListener('click', (e) => {
+    // Header row
+    const header = document.createElement('div');
+    header.className = 'story-header';
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'story-title';
+    titleSpan.textContent = story.title;
+    const pill = document.createElement('span');
+    pill.className = 'phase-pill';
+    pill.setAttribute('data-phase', story.status);
+    pill.textContent = PHASES[story.status]?.label || story.status;
+    header.appendChild(titleSpan);
+    header.appendChild(pill);
+
+    card.appendChild(num);
+    card.appendChild(header);
+
+    // Advance button
+    if (canAdvance && nextPhase) {
+      const actions = document.createElement('div');
+      actions.className = 'story-actions';
+      const btn = document.createElement('button');
+      btn.className = 'btn-advance';
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+      btn.appendChild(document.createTextNode(` ${PHASES[nextPhase]?.label || nextPhase}`));
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
         advanceStory(story.slug);
       });
+      actions.appendChild(btn);
+      card.appendChild(actions);
     }
 
     list.appendChild(card);
@@ -547,7 +593,7 @@ function clearTerminalOutput() {
 function sendTerminalInput() {
   const input = document.getElementById('terminal-input');
   const text = input.value;
-  if (!text || !terminalSessionId || !ws) return;
+  if (!text || !terminalSessionId || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   ws.send(JSON.stringify({
     type: 'terminal:input',

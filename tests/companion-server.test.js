@@ -24,7 +24,15 @@ function createMockTerminalManager() {
     resize(id, cols, rows) { /* no-op */ },
     kill(id) { sessions.delete(id); },
     killAll() { sessions.clear(); },
-    has(id) { return sessions.has(id); }
+    has(id) { return sessions.has(id); },
+    emitData(id, data) {
+      const s = sessions.get(id);
+      if (s?.onData) s.onData(id, data);
+    },
+    emitExit(id, code) {
+      const s = sessions.get(id);
+      if (s?.onExit) s.onExit(id, code);
+    }
   };
 }
 
@@ -571,6 +579,62 @@ describe('CompanionServer', () => {
       // Wait a bit for cleanup
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(tm.sessions.has(sessionId)).toBe(false);
+    });
+
+    it('rejects terminal:input for unowned session', async () => {
+      const tm = createMockTerminalManager();
+      let writeCalledWith = null;
+      const origWrite = tm.write;
+      tm.write = (id, data) => { writeCalledWith = { id, data }; origWrite(id, data); };
+
+      server = createServer({ terminalManager: tm });
+      await server.start(nextPort());
+
+      const { ws: client, messages } = await connectWS(server.port, server.token);
+      await waitForMessage(messages, 'project:state');
+
+      // Try to write to a session ID this client doesn't own
+      client.send(JSON.stringify({ type: 'terminal:input', data: { id: 999, input: 'hack\n' } }));
+      // Give time for message to be processed
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(writeCalledWith).toBeNull();
+
+      client.close();
+    });
+
+    it('emitData/emitExit helpers work on mock terminal manager', () => {
+      const tm = createMockTerminalManager();
+      let dataReceived = null;
+      let exitReceived = null;
+      const id = tm.create({
+        onData: (sid, d) => { dataReceived = { sid, d }; },
+        onExit: (sid, c) => { exitReceived = { sid, c }; }
+      });
+      tm.emitData(id, 'hello');
+      expect(dataReceived).toEqual({ sid: id, d: 'hello' });
+      tm.emitExit(id, 0);
+      expect(exitReceived).toEqual({ sid: id, c: 0 });
+    });
+
+    it('rotateToken disconnects existing clients', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const { ws: client, messages } = await connectWS(server.port, server.token);
+      await waitForMessage(messages, 'project:state');
+
+      const oldToken = server.token;
+      const newToken = server.rotateToken();
+
+      expect(newToken).not.toBe(oldToken);
+
+      // Client should be disconnected
+      await new Promise((resolve) => {
+        client.on('close', (code) => {
+          expect(code).toBe(4001);
+          resolve();
+        });
+      });
     });
   });
 });

@@ -98,12 +98,24 @@ async function startCompanionServer() {
     }
   });
 
+  // Restore persisted token if available
+  if (prefs.settings?.companion?.token) {
+    companionServer.token = prefs.settings.companion.token;
+  }
+
   try {
     await companionServer.start(port);
     companionHeartbeat = startHeartbeat(companionServer);
+    // Persist token for future sessions
+    prefs.settings = prefs.settings || {};
+    prefs.settings.companion = prefs.settings.companion || {};
+    prefs.settings.companion.token = companionServer.token;
+    savePrefs(prefs);
     console.log('[companion] Server started successfully');
   } catch (err) {
     console.error('[companion] Failed to start server:', err.message);
+    companionServer = null;
+    companionHeartbeat = null;
   }
 }
 
@@ -143,12 +155,18 @@ ipcMain.handle('new-window', () => {
 app.on('window-all-closed', () => {
   terminalManager.killAll();
   if (companionHeartbeat) clearInterval(companionHeartbeat);
+  companionHeartbeat = null;
   if (companionServer) companionServer.stop();
+  companionServer = null;
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('activate', () => {
+app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  // Restart companion server if it was cleaned up
+  if (!companionServer) {
+    await startCompanionServer();
+  }
 });
 
 // ── IPC: Project management ──────────────────────────────────────────────
@@ -508,8 +526,13 @@ ipcMain.handle('companion:toggle', async (_, enabled) => {
 
 ipcMain.handle('companion:regenerate-token', () => {
   if (!companionServer) return null;
-  const crypto = require('crypto');
-  companionServer.token = crypto.randomBytes(24).toString('hex');
+  companionServer.rotateToken();
+  // Persist the new token
+  const prefs = loadPrefs();
+  if (!prefs.settings) prefs.settings = {};
+  if (!prefs.settings.companion) prefs.settings.companion = {};
+  prefs.settings.companion.token = companionServer.token;
+  savePrefs(prefs);
   return companionServer.getConnectionInfo();
 });
 
