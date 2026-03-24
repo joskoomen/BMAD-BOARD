@@ -75,5 +75,19 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, payload) => callback(payload.id, payload.exitCode);
     ipcRenderer.on('terminal:exit', handler);
     return () => ipcRenderer.removeListener('terminal:exit', handler);
+  },
+
+  // Menu events
+  onCloseActiveTab: (callback) => {
+    ipcRenderer.on('close-active-tab', callback);
+    return () => ipcRenderer.removeListener('close-active-tab', callback);
+  },
+  onNewTerminalTab: (callback) => {
+    ipcRenderer.on('new-terminal-tab', callback);
+    return () => ipcRenderer.removeListener('new-terminal-tab', callback);
+  },
+  onShowSettings: (callback) => {
+    ipcRenderer.on('show-settings', callback);
+    return () => ipcRenderer.removeListener('show-settings', callback);
   }
 });

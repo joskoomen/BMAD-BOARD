@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { scanProject } = require('./lib/bmad-scanner');
@@ -90,6 +90,81 @@ function getWindowFromEvent(event) {
 }
 
 app.whenReady().then(async () => {
+  // Build application menu with keyboard shortcuts
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => createWindow()
+        },
+        {
+          label: 'New Terminal Tab',
+          accelerator: 'CmdOrCtrl+T',
+          click: (_, win) => {
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('new-terminal-tab');
+            }
+          }
+        },
+        {
+          label: 'Close Tab',
+          accelerator: 'CmdOrCtrl+W',
+          click: (_, win) => {
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('close-active-tab');
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Settings',
+          accelerator: 'CmdOrCtrl+,',
+          click: (_, win) => {
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('show-settings');
+            }
+          }
+        },
+        { type: 'separator' },
+        ...(isMac ? [{ role: 'close' }] : [{ role: 'quit' }])
+      ]
+    },
+    { label: 'Edit', submenu: [
+      { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+      { role: 'cut' }, { role: 'copy' }, { role: 'paste' },
+      { role: 'selectAll' }
+    ]},
+    { label: 'View', submenu: [
+      { role: 'reload' }, { role: 'forceReload' },
+      { role: 'toggleDevTools' }, { type: 'separator' },
+      { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+      { type: 'separator' }, { role: 'togglefullscreen' }
+    ]},
+    { label: 'Window', submenu: [
+      { role: 'minimize' }, { role: 'zoom' },
+      ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : [])
+    ]}
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   createWindow();
   await startCompanionServer();
 });
