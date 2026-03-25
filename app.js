@@ -1753,28 +1753,58 @@ function generateQRPlaceholder(url) {
 }
 
 /**
- * Minimal QR code matrix generator (Version 2, ECC-L, byte mode).
+ * QR code matrix generator supporting versions 1-6, ECC-L, byte mode.
+ * Automatically selects the smallest version that fits the data.
  * Returns a 2D boolean array of modules or null on failure.
  */
 function generateQRMatrix(text) {
   const data = new TextEncoder().encode(text);
-  if (data.length > 32) return null; // Version 2 capacity limit
 
-  // Version 2: 25x25 modules, ECC-L: 34 data codewords, 10 EC codewords
-  const version = 2, size = 25;
-  const totalDataCW = 34, ecCW = 10;
-  const dataCW = totalDataCW - ecCW; // 24 usable after EC
+  // Version table: [size, totalDataCW, ecCW, alignmentCenters[]]
+  const VERSIONS = [
+    null, // index 0 unused
+    [21, 26, 7,  []],          // V1: 19 data bytes
+    [25, 44, 10, [18]],        // V2: 34 data bytes
+    [29, 70, 15, [22]],        // V3: 55 data bytes
+    [33, 100, 20, [26]],       // V4: 80 data bytes
+    [37, 134, 26, [30]],       // V5: 108 data bytes
+    [41, 172, 36, [34]],       // V6: 136 data bytes
+  ];
+
+  // Pre-computed format info strings (ECC-L + mask 0, BCH encoded + XOR mask)
+  const FORMAT_BITS = '111011111000100';
+
+  // Find smallest version that fits
+  let version = null;
+  for (let v = 1; v <= 6; v++) {
+    const [, totalCW, ecCW] = VERSIONS[v];
+    const dataCW = totalCW - ecCW;
+    // Byte mode overhead: 4 bits mode + 8 bits count (v1-9) = 12 bits = 1.5 bytes
+    // Available payload = dataCW - 2 (mode+count overhead rounded up)
+    const countBits = v <= 9 ? 8 : 16;
+    const overhead = Math.ceil((4 + countBits) / 8);
+    if (data.length <= dataCW - overhead) {
+      version = v;
+      break;
+    }
+  }
+  if (!version) return null;
+
+  const [size, totalDataCW, ecCW, alignCenters] = VERSIONS[version];
+  const dataCW = totalDataCW - ecCW;
 
   // Build data bitstream: mode(4) + count(8) + data + terminator + padding
   let bits = '';
   bits += '0100'; // Byte mode indicator
-  bits += data.length.toString(2).padStart(8, '0'); // Character count
+  bits += data.length.toString(2).padStart(8, '0');
   for (const b of data) bits += b.toString(2).padStart(8, '0');
-  bits += '0000'; // Terminator
+  // Terminator (up to 4 bits, don't exceed capacity)
+  const terminatorLen = Math.min(4, dataCW * 8 - bits.length);
+  bits += '0'.repeat(terminatorLen);
   while (bits.length % 8 !== 0) bits += '0';
   while (bits.length < dataCW * 8) {
-    bits += '11101100'; // Pad byte 0xEC
-    if (bits.length < dataCW * 8) bits += '00010001'; // Pad byte 0x11
+    bits += '11101100';
+    if (bits.length < dataCW * 8) bits += '00010001';
   }
 
   const codewords = [];
@@ -1782,34 +1812,47 @@ function generateQRMatrix(text) {
     codewords.push(parseInt(bits.slice(i, i + 8), 2));
   }
 
-  // Reed-Solomon error correction (GF(2^8) with primitive poly 0x11d)
+  // Reed-Solomon error correction
   const ec = reedSolomon(codewords, ecCW);
   const allCW = [...codewords, ...ec];
 
   // Initialize module grid
-  const grid = Array.from({ length: size }, () => Array(size).fill(null));
+  const grid = Array.from({ length: size }, () => Array(size).fill(false));
   const reserved = Array.from({ length: size }, () => Array(size).fill(false));
 
-  // Place finder patterns
-  placeFinder(grid, reserved, 0, 0);
-  placeFinder(grid, reserved, size - 7, 0);
-  placeFinder(grid, reserved, 0, size - 7);
+  // Place finder patterns (3 corners)
+  qrPlaceFinder(grid, reserved, 0, 0, size);
+  qrPlaceFinder(grid, reserved, size - 7, 0, size);
+  qrPlaceFinder(grid, reserved, 0, size - 7, size);
 
-  // Place alignment pattern (version 2: center at 18,18)
-  placeAlignment(grid, reserved, 18, 18);
+  // Place alignment patterns (skip if overlapping finder)
+  if (alignCenters.length > 0) {
+    const positions = [6, ...alignCenters];
+    for (const r of positions) {
+      for (const c of positions) {
+        // Skip if overlapping finder patterns
+        if (r <= 8 && c <= 8) continue;
+        if (r <= 8 && c >= size - 8) continue;
+        if (r >= size - 8 && c <= 8) continue;
+        qrPlaceAlignment(grid, reserved, r, c);
+      }
+    }
+  }
 
   // Timing patterns
   for (let i = 8; i < size - 8; i++) {
-    grid[6][i] = i % 2 === 0; reserved[6][i] = true;
-    grid[i][6] = i % 2 === 0; reserved[i][6] = true;
+    if (!reserved[6][i]) { grid[6][i] = i % 2 === 0; reserved[6][i] = true; }
+    if (!reserved[i][6]) { grid[i][6] = i % 2 === 0; reserved[i][6] = true; }
   }
 
   // Dark module + reserved format info areas
   grid[size - 8][8] = true; reserved[size - 8][8] = true;
-  reserveFormatArea(reserved, size);
+  qrReserveFormatArea(reserved, size);
+
+  // Version info (only for version >= 7, not needed here)
 
   // Place data bits
-  placeData(grid, reserved, allCW, size);
+  qrPlaceData(grid, reserved, allCW, size);
 
   // Apply mask 0 (checkerboard: (row + col) % 2 === 0)
   for (let r = 0; r < size; r++) {
@@ -1820,15 +1863,13 @@ function generateQRMatrix(text) {
     }
   }
 
-  // Place format info (mask 0, ECC-L)
-  // Pre-computed: ECC-L + mask 0 => format bits 111011111000100
-  const formatBits = '111011111000100';
-  placeFormatInfo(grid, formatBits, size);
+  // Place format info (ECC-L + mask 0)
+  qrPlaceFormatInfo(grid, FORMAT_BITS, size);
 
   return grid;
 }
 
-function placeFinder(grid, reserved, row, col) {
+function qrPlaceFinder(grid, reserved, row, col, size) {
   const pattern = [
     [1,1,1,1,1,1,1],
     [1,0,0,0,0,0,1],
@@ -1841,18 +1882,18 @@ function placeFinder(grid, reserved, row, col) {
   for (let r = -1; r <= 7; r++) {
     for (let c = -1; c <= 7; c++) {
       const gr = row + r, gc = col + c;
-      if (gr < 0 || gr >= grid.length || gc < 0 || gc >= grid.length) continue;
+      if (gr < 0 || gr >= size || gc < 0 || gc >= size) continue;
       if (r >= 0 && r < 7 && c >= 0 && c < 7) {
         grid[gr][gc] = !!pattern[r][c];
       } else {
-        grid[gr][gc] = false; // Separator
+        grid[gr][gc] = false;
       }
       reserved[gr][gc] = true;
     }
   }
 }
 
-function placeAlignment(grid, reserved, centerR, centerC) {
+function qrPlaceAlignment(grid, reserved, centerR, centerC) {
   for (let r = -2; r <= 2; r++) {
     for (let c = -2; c <= 2; c++) {
       const gr = centerR + r, gc = centerC + c;
@@ -1862,7 +1903,7 @@ function placeAlignment(grid, reserved, centerR, centerC) {
   }
 }
 
-function reserveFormatArea(reserved, size) {
+function qrReserveFormatArea(reserved, size) {
   for (let i = 0; i < 8; i++) {
     reserved[8][i] = true; reserved[8][size - 1 - i] = true;
     reserved[i][8] = true; reserved[size - 1 - i][8] = true;
@@ -1870,25 +1911,27 @@ function reserveFormatArea(reserved, size) {
   reserved[8][8] = true;
 }
 
-function placeFormatInfo(grid, bits, size) {
-  const positions1 = [[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
-  const positions2 = [[size-1,8],[size-2,8],[size-3,8],[size-4,8],[size-5,8],[size-6,8],[size-7,8],[8,size-8],[8,size-7],[8,size-6],[8,size-5],[8,size-4],[8,size-3],[8,size-2],[8,size-1]];
+function qrPlaceFormatInfo(grid, bits, size) {
+  const p1 = [[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
+  const p2 = [[size-1,8],[size-2,8],[size-3,8],[size-4,8],[size-5,8],[size-6,8],[size-7,8],[8,size-8],[8,size-7],[8,size-6],[8,size-5],[8,size-4],[8,size-3],[8,size-2],[8,size-1]];
   for (let i = 0; i < 15; i++) {
     const bit = bits[i] === '1';
-    grid[positions1[i][0]][positions1[i][1]] = bit;
-    grid[positions2[i][0]][positions2[i][1]] = bit;
+    grid[p1[i][0]][p1[i][1]] = bit;
+    grid[p2[i][0]][p2[i][1]] = bit;
   }
 }
 
-function placeData(grid, reserved, codewords, size) {
+function qrPlaceData(grid, reserved, codewords, size) {
   let bitIdx = 0;
   const totalBits = codewords.length * 8;
   let col = size - 1;
   let goingUp = true;
 
   while (col >= 0) {
-    if (col === 6) col--; // Skip timing column
-    const rows = goingUp ? Array.from({ length: size }, (_, i) => size - 1 - i) : Array.from({ length: size }, (_, i) => i);
+    if (col === 6) col--;
+    const rows = goingUp
+      ? Array.from({ length: size }, (_, i) => size - 1 - i)
+      : Array.from({ length: size }, (_, i) => i);
     for (const row of rows) {
       for (const dc of [0, -1]) {
         const c = col + dc;
@@ -1909,7 +1952,6 @@ function placeData(grid, reserved, codewords, size) {
 }
 
 function reedSolomon(data, ecCount) {
-  // Generator polynomial coefficients for ecCount error correction codewords
   const gfExp = new Uint8Array(512);
   const gfLog = new Uint8Array(256);
   let v = 1;
@@ -1923,7 +1965,6 @@ function reedSolomon(data, ecCount) {
 
   const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : gfExp[gfLog[a] + gfLog[b]];
 
-  // Build generator polynomial
   let gen = [1];
   for (let i = 0; i < ecCount; i++) {
     const newGen = new Array(gen.length + 1).fill(0);
@@ -1934,7 +1975,6 @@ function reedSolomon(data, ecCount) {
     gen = newGen;
   }
 
-  // Polynomial division
   const result = new Uint8Array(ecCount);
   const msg = [...data, ...result];
   for (let i = 0; i < data.length; i++) {

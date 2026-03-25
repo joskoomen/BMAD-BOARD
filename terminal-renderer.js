@@ -268,6 +268,7 @@ async function createTab(slashCommand, opts) {
     scrollback: 10000,
     tabStopWidth: 4,
     drawBoldTextInBrightColors: true,
+    fontWeightBold: 'normal',
     minimumContrastRatio: 1
   });
 
@@ -461,12 +462,14 @@ function switchTab(tabId) {
     showNextStepBar(tab);
   }
 
-  // Fit and focus
+  // Fit and focus — stagger to ensure layout has settled
   if (tab.fitAddon) {
-    setTimeout(() => {
+    const doFit = () => {
       try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      tab.term.focus();
-    }, 50);
+      tab.term.scrollToBottom();
+    };
+    setTimeout(() => { doFit(); tab.term.focus(); }, 50);
+    setTimeout(doFit, 200);
   }
 
   updateStatusDot();
@@ -1060,6 +1063,16 @@ async function initTerminal() {
   await createTab(pending || null, pendingOpts || undefined);
 }
 
+// ── Companion: launch command from mobile ─────────────────────────────────────
+
+window.api.onCompanionLaunchCommand(({ command, storySlug, phase }) => {
+  // Switch to terminal view and open a new tab with the command
+  if (typeof window.showView === 'function') {
+    window.showView('terminal');
+  }
+  window.sendToTerminal(command, { storySlug, storyPhase: phase });
+});
+
 // ── Integration with main app.js view system ─────────────────────────────────
 
 const originalShowView = window.showView;
@@ -1091,10 +1104,9 @@ function terminalAwareShowView(view) {
         // Just focus the active tab
         const tab = getActiveTab();
         if (tab && tab.fitAddon) {
-          setTimeout(() => {
-            try { tab.fitAddon.fit(); } catch { /* ignore */ }
-            tab.term.focus();
-          }, 50);
+          const doFit = () => { try { tab.fitAddon.fit(); } catch { /* ignore */ } tab.term.scrollToBottom(); };
+          setTimeout(() => { doFit(); tab.term.focus(); }, 50);
+          setTimeout(doFit, 200);
         }
         // If no tabs exist, create one
         if (tabs.size === 0) {
@@ -1112,9 +1124,9 @@ function terminalAwareShowView(view) {
     // Refit terminal when switching views (split size may have changed)
     const tab = getActiveTab();
     if (tab && tab.fitAddon) {
-      setTimeout(() => {
-        try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      }, 50);
+      const doFit = () => { try { tab.fitAddon.fit(); } catch { /* ignore */ } tab.term.scrollToBottom(); };
+      setTimeout(doFit, 50);
+      setTimeout(doFit, 200);
     }
   }
 }

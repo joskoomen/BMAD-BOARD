@@ -190,6 +190,16 @@ async function startCompanionServer() {
     },
     updateStoryStatus: (projectPath, slug, newPhase) => {
       updateStoryStatusInYaml(projectPath, slug, newPhase);
+    },
+    launchOnDesktop: (command, storySlug, phase) => {
+      // Send to the most recently focused window's renderer
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('companion-launch-command', { command, storySlug, phase });
+        // Bring window to front
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
     }
   });
 
