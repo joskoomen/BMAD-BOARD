@@ -216,7 +216,13 @@ function loadXtermModules() {
       fitScript.onload = () => {
         const linksScript = document.createElement('script');
         linksScript.src = './node_modules/@xterm/addon-web-links/lib/addon-web-links.js';
-        linksScript.onload = () => { xtermLoaded = true; resolve(); };
+        linksScript.onload = () => {
+          const unicodeScript = document.createElement('script');
+          unicodeScript.src = './node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js';
+          unicodeScript.onload = () => { xtermLoaded = true; resolve(); };
+          unicodeScript.onerror = () => { xtermLoaded = true; resolve(); };
+          document.head.appendChild(unicodeScript);
+        };
         linksScript.onerror = () => { xtermLoaded = true; resolve(); };
         document.head.appendChild(linksScript);
       };
@@ -259,7 +265,7 @@ async function createTab(slashCommand, opts) {
     theme: warpTheme,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas', 'Fira Code', monospace",
     fontSize: 13,
-    lineHeight: 1.4,
+    lineHeight: 1.2,
     letterSpacing: 0,
     cursorStyle: 'bar',
     cursorBlink: true,
@@ -282,6 +288,11 @@ async function createTab(slashCommand, opts) {
   const WebLinksAddonClass = window.WebLinksAddon?.WebLinksAddon || (window.exports && window.exports.WebLinksAddon);
   if (WebLinksAddonClass) {
     term.loadAddon(new WebLinksAddonClass());
+  }
+  const Unicode11AddonClass = window.Unicode11Addon?.Unicode11Addon || (window.exports && window.exports.Unicode11Addon);
+  if (Unicode11AddonClass) {
+    term.loadAddon(new Unicode11AddonClass());
+    term.unicode.activeVersion = '11';
   }
 
   // Create container element
@@ -342,6 +353,7 @@ async function createTab(slashCommand, opts) {
     if (tab.fitAddon && tab.term && tab.id === activeTabId) {
       try {
         tab.fitAddon.fit();
+        tab.term.scrollToBottom();
       } catch { /* ignore */
       }
     }
