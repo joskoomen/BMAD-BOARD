@@ -554,8 +554,22 @@ ipcMain.handle('session-history:save', (event, entry) => {
   entry.projectPath = entry.projectPath || projectPath;
   entry.projectName = entry.projectName || (projectPath ? path.basename(projectPath) : 'Unknown');
 
-  // Prepend (most recent first)
-  history.unshift(entry);
+  // Check for existing entry with same claudeSessionId or same command
+  const existingIdx = history.findIndex(h =>
+    (entry.claudeSessionId && h.claudeSessionId === entry.claudeSessionId) ||
+    (!entry.claudeSessionId && entry.command && h.command === entry.command)
+  );
+
+  if (existingIdx !== -1) {
+    // Update existing entry and move to top
+    const existing = history.splice(existingIdx, 1)[0];
+    existing.createdAt = entry.createdAt;
+    if (entry.claudeSessionId) existing.claudeSessionId = entry.claudeSessionId;
+    history.unshift(existing);
+  } else {
+    // Prepend new entry (most recent first)
+    history.unshift(entry);
+  }
 
   // Keep max 20 entries
   if (history.length > 20) history.length = 20;

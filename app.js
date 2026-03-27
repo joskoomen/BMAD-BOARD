@@ -225,6 +225,15 @@ function setupKeyboardShortcuts() {
 }
 
 async function openProject() {
+  // If a project is already loaded, ask whether to open in a new window
+  if (projectData) {
+    const openNew = confirm('Open in a new window?');
+    if (openNew) {
+      window.api.newWindow();
+      return;
+    }
+  }
+
   const data = await window.api.openProject();
   if (!data) return;
 
