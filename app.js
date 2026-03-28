@@ -188,8 +188,6 @@ function setupNavigation() {
         sv('history');
       } else if (view === 'git') {
         if (isGitRepo) sv('git');
-      } else if (view === 'settings') {
-        sv('settings');
       } else if (view === 'terminal') {
         sv('terminal');
       }
@@ -312,6 +310,41 @@ async function renderGitView() {
       return;
     }
 
+    // ── Render branches in sidebar ──
+    const sidebarBranches = document.getElementById('git-sidebar-branches');
+    if (sidebarBranches) {
+      const localHtml = branches.local.map(b => `
+        <div class="git-sidebar-branch ${b.current ? 'git-sidebar-branch-current' : 'git-sidebar-branch-clickable'}" ${b.current ? '' : `data-branch="${b.name}"`} title="${b.current ? 'Current branch' : `Checkout ${b.name}`}">
+          <span class="git-sidebar-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
+          <span class="git-sidebar-branch-name">${b.name}</span>
+          ${b.current ? '<span class="git-branch-tag">HEAD</span>' : ''}
+        </div>
+      `).join('');
+
+      const remoteHtml = branches.remote.map(b => {
+        const localName = b.name.replace(/^[^/]+\//, '');
+        const hasLocal = branches.local.some(lb => lb.name === localName);
+        return `
+          <div class="git-sidebar-branch git-sidebar-branch-remote ${hasLocal ? '' : 'git-sidebar-branch-clickable'}" ${hasLocal ? '' : `data-remote-branch="${b.name}"`} title="${hasLocal ? 'Tracked locally' : `Checkout ${localName}`}">
+            <span class="git-sidebar-branch-icon">&#9675;</span>
+            <span class="git-sidebar-branch-name">${b.name}</span>
+          </div>
+        `;
+      }).join('');
+
+      sidebarBranches.innerHTML = `
+        <div class="git-sidebar-group">
+          <div class="git-sidebar-group-title">Local <span class="git-panel-count">${branches.local.length}</span></div>
+          ${localHtml}
+        </div>
+        <div class="git-sidebar-group">
+          <div class="git-sidebar-group-title">Remote <span class="git-panel-count">${branches.remote.length}</span></div>
+          ${remoteHtml}
+        </div>
+      `;
+    }
+
+    // ── Render main content ──
     const aheadBehind = [];
     if (status.ahead > 0) aheadBehind.push(`<span class="git-ahead" title="Commits ahead of remote">&uarr;${status.ahead}</span>`);
     if (status.behind > 0) aheadBehind.push(`<span class="git-behind" title="Commits behind remote">&darr;${status.behind}</span>`);
@@ -323,27 +356,6 @@ async function renderGitView() {
       : '<span class="git-clean-badge">clean</span>';
 
     const hasPushTarget = !!status.tracking;
-
-    const localBranchesHtml = branches.local.map(b => `
-      <div class="git-branch-item ${b.current ? 'git-branch-current' : 'git-branch-clickable'}" ${b.current ? '' : `data-branch="${b.name}"`} title="${b.current ? 'Current branch' : `Checkout ${b.name}`}">
-        <span class="git-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
-        <span class="git-branch-name">${b.name}</span>
-        ${b.current ? '<span class="git-branch-tag">HEAD</span>' : '<span class="git-branch-action">checkout</span>'}
-      </div>
-    `).join('');
-
-    const remoteBranchesHtml = branches.remote.map(b => {
-      // Check if a local branch already tracks this remote
-      const localName = b.name.replace(/^[^/]+\//, '');
-      const hasLocal = branches.local.some(lb => lb.name === localName);
-      return `
-        <div class="git-branch-item git-branch-remote ${hasLocal ? '' : 'git-branch-clickable'}" ${hasLocal ? '' : `data-remote-branch="${b.name}"`} title="${hasLocal ? 'Tracked locally' : `Checkout ${localName}`}">
-          <span class="git-branch-icon">&#9675;</span>
-          <span class="git-branch-name">${b.name}</span>
-          ${hasLocal ? '' : '<span class="git-branch-action">checkout</span>'}
-        </div>
-      `;
-    }).join('');
 
     const commitsHtml = log.map(c => `
       <div class="git-commit-item">
@@ -377,26 +389,6 @@ async function renderGitView() {
       </div>
 
       <div class="git-panels">
-        <div class="git-panel">
-          <div class="git-panel-header">
-            <h3>Local Branches</h3>
-            <span class="git-panel-count">${branches.local.length}</span>
-          </div>
-          <div class="git-branch-list">
-            ${localBranchesHtml || '<p class="git-empty">No local branches</p>'}
-          </div>
-        </div>
-
-        <div class="git-panel">
-          <div class="git-panel-header">
-            <h3>Remote Branches</h3>
-            <span class="git-panel-count">${branches.remote.length}</span>
-          </div>
-          <div class="git-branch-list">
-            ${remoteBranchesHtml || '<p class="git-empty">No remote branches</p>'}
-          </div>
-        </div>
-
         <div class="git-panel">
           <div class="git-panel-header">
             <h3>Recent Commits</h3>

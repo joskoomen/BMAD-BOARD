@@ -1071,6 +1071,12 @@ function terminalAwareShowView(view) {
     bmadActions.classList.toggle('hidden', view !== 'terminal');
   }
 
+  // Show/hide Git branches sidebar section
+  const gitSidebar = document.getElementById('git-sidebar');
+  if (gitSidebar) {
+    gitSidebar.classList.toggle('hidden', view !== 'git');
+  }
+
   // Let the original showView handle layout (split-top/bottom visibility)
   if (typeof originalShowView === 'function') {
     originalShowView(view);
