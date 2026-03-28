@@ -829,9 +829,15 @@ async function renderGitView() {
           <div class="git-panel-header">
             <h3>Pull Request</h3>
           </div>
-          <p class="git-empty-sm">Install and authenticate <code>gh</code> CLI to create PRs.<br>
-            <a href="#" id="btn-gh-install-info" class="git-link">How to install gh CLI</a>
-          </p>
+          <div class="git-gh-install">
+            <p class="git-empty-sm">The <code>gh</code> CLI is required to create PRs.</p>
+            <div class="git-gh-install-cmds">
+              <div class="git-gh-cmd"><span class="git-gh-os">macOS</span><code>brew install gh && gh auth login</code></div>
+              <div class="git-gh-cmd"><span class="git-gh-os">Linux</span><code>sudo apt install gh && gh auth login</code></div>
+              <div class="git-gh-cmd"><span class="git-gh-os">Windows</span><code>winget install GitHub.cli && gh auth login</code></div>
+            </div>
+            <p class="git-empty-sm" style="margin-top:8px">After installing, restart the app or <a href="#" id="btn-gh-install-info" class="git-link">visit cli.github.com</a></p>
+          </div>
         </div>
         `}
       </div>

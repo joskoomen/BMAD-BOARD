@@ -3035,3 +3035,42 @@ html, body {
 .git-rebase-banner {
   flex-wrap: wrap;
 }
+
+/* ── gh CLI Install ──────────────────────────────────────────────────── */
+
+.git-gh-install {
+  padding: 8px;
+}
+
+.git-gh-install-cmds {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.git-gh-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.git-gh-cmd code {
+  background: var(--bg-primary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 11px;
+  flex: 1;
+  user-select: all;
+}
+
+.git-gh-os {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  width: 56px;
+  flex-shrink: 0;
+}
