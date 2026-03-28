@@ -508,3 +508,131 @@ describe('GitManager.merge', () => {
     expect(statusAfter.merging).toBe(false);
   });
 });
+
+// ── tags ──────────────────────────────────────────────────────────────
+
+describe('GitManager.tags', () => {
+  it('returns empty array when no tags exist', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    const tags = await gm.tags();
+    expect(tags).toEqual([]);
+  });
+
+  it('lists tags after creation', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    await gm.createTag('v1.0.0', 'First release');
+    await gm.createTag('v1.1.0');
+
+    const tags = await gm.tags();
+    expect(tags).toContain('v1.0.0');
+    expect(tags).toContain('v1.1.0');
+    expect(tags.length).toBe(2);
+  });
+
+  it('creates an annotated tag with message', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    await gm.createTag('v2.0.0', 'Major release');
+
+    // Verify tag exists and is annotated
+    const tagInfo = execSync('git tag -l -n1 v2.0.0', { cwd: tmpDir }).toString().trim();
+    expect(tagInfo).toContain('Major release');
+  });
+
+  it('creates a lightweight tag without message', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    await gm.createTag('v0.1.0');
+
+    const tags = await gm.tags();
+    expect(tags).toContain('v0.1.0');
+  });
+
+  it('deletes a tag', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    await gm.createTag('v1.0.0', 'Release');
+
+    let tags = await gm.tags();
+    expect(tags).toContain('v1.0.0');
+
+    await gm.deleteTag('v1.0.0');
+    tags = await gm.tags();
+    expect(tags).not.toContain('v1.0.0');
+  });
+
+  it('pushes a tag to remote', async () => {
+    // Create a bare remote
+    const remoteDir = createTmpDir();
+    execSync('git init --bare', { cwd: remoteDir, stdio: 'ignore' });
+
+    // Clone it
+    execSync(`git clone "${remoteDir}" cloned`, { cwd: tmpDir, stdio: 'ignore' });
+    const clonedDir = path.join(tmpDir, 'cloned');
+    execSync('git config user.email "test@test.com"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config commit.gpgsign false', { cwd: clonedDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(clonedDir, 'file.txt'), 'hello');
+    execSync('git add . && git commit -m "init"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git push', { cwd: clonedDir, stdio: 'ignore' });
+
+    const gm = new GitManager(clonedDir);
+    await gm.createTag('v1.0.0', 'Release');
+    await gm.pushTag('v1.0.0');
+
+    // Verify remote has the tag
+    const remoteTags = execSync('git tag', { cwd: remoteDir }).toString().trim();
+    expect(remoteTags).toContain('v1.0.0');
+
+    fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+
+  it('pushes all tags to remote', async () => {
+    const remoteDir = createTmpDir();
+    execSync('git init --bare', { cwd: remoteDir, stdio: 'ignore' });
+
+    execSync(`git clone "${remoteDir}" cloned`, { cwd: tmpDir, stdio: 'ignore' });
+    const clonedDir = path.join(tmpDir, 'cloned');
+    execSync('git config user.email "test@test.com"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config commit.gpgsign false', { cwd: clonedDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(clonedDir, 'file.txt'), 'hello');
+    execSync('git add . && git commit -m "init"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git push', { cwd: clonedDir, stdio: 'ignore' });
+
+    const gm = new GitManager(clonedDir);
+    await gm.createTag('v1.0.0', 'First');
+    await gm.createTag('v2.0.0', 'Second');
+    await gm.pushAllTags();
+
+    const remoteTags = execSync('git tag', { cwd: remoteDir }).toString().trim();
+    expect(remoteTags).toContain('v1.0.0');
+    expect(remoteTags).toContain('v2.0.0');
+
+    fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+});

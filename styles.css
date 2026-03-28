@@ -2325,3 +2325,67 @@ html, body {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* ── Tags Panel ──────────────────────────────────────────────────────── */
+
+.git-new-tag-form {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+.git-new-tag-form .git-conv-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.git-tag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-tag-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.git-tag-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.git-tag-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.git-tag-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.git-tag-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.git-tag-item:hover .git-tag-actions {
+  opacity: 1;
+}
+
+.git-tag-delete {
+  color: var(--danger) !important;
+}

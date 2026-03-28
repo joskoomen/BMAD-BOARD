@@ -840,6 +840,57 @@ ipcMain.handle('git:abort-merge', async (event) => {
   return { ok: true };
 });
 
+ipcMain.handle('git:tags', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return [];
+  const gm = new GitManager(projectPath);
+  return gm.tags();
+});
+
+ipcMain.handle('git:create-tag', async (event, name, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.createTag(name, message);
+  return { ok: true };
+});
+
+ipcMain.handle('git:delete-tag', async (event, name) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.deleteTag(name);
+  return { ok: true };
+});
+
+ipcMain.handle('git:push-tag', async (event, name) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.pushTag(name);
+  return { ok: true };
+});
+
+ipcMain.handle('git:push-all-tags', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.pushAllTags();
+  return { ok: true };
+});
+
+ipcMain.handle('git:open-merge-tool', async (event, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  try {
+    await gm.openMergeTool(file);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('git:stage', async (event, files) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };

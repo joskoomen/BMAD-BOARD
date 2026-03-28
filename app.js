@@ -299,10 +299,11 @@ async function renderGitView() {
   container.innerHTML = '<p class="git-loading">Loading git data...</p>';
 
   try {
-    const [branches, status, log] = await Promise.all([
+    const [branches, status, log, tags] = await Promise.all([
       window.api.gitBranches(),
       window.api.gitStatus(),
-      window.api.gitLog(25)
+      window.api.gitLog(25),
+      window.api.gitTags()
     ]);
 
     if (branches.error || status.error) {
@@ -507,6 +508,37 @@ async function renderGitView() {
           </div>
           <div class="git-commit-list">
             ${commitsHtml || '<p class="git-empty">No commits yet</p>'}
+          </div>
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Tags</h3>
+            <div class="git-panel-header-actions">
+              <span class="git-panel-count">${tags.length}</span>
+              <button class="btn btn-ghost btn-xs" id="btn-git-new-tag">+ New Tag</button>
+              ${tags.length > 0 ? '<button class="btn btn-ghost btn-xs" id="btn-git-push-all-tags" title="Push all tags to remote">Push All</button>' : ''}
+            </div>
+          </div>
+          <div id="git-new-tag-form" class="git-new-tag-form hidden">
+            <input type="text" id="git-tag-name" class="git-conv-input" placeholder="Tag name (e.g. v1.0.0)">
+            <input type="text" id="git-tag-message" class="git-conv-input" placeholder="Message (optional, for annotated tag)">
+            <div class="git-commit-actions">
+              <button class="btn btn-ghost btn-sm" id="btn-git-cancel-tag">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="btn-git-create-tag">Create Tag</button>
+            </div>
+          </div>
+          <div class="git-tag-list">
+            ${tags.length > 0 ? tags.slice().reverse().map(t => `
+              <div class="git-tag-item">
+                <span class="git-tag-icon">&#127991;</span>
+                <span class="git-tag-name">${t}</span>
+                <div class="git-tag-actions">
+                  <button class="btn btn-ghost btn-xs" data-push-tag="${t}" title="Push to remote">Push</button>
+                  <button class="btn btn-ghost btn-xs git-tag-delete" data-delete-tag="${t}" title="Delete tag">&#10005;</button>
+                </div>
+              </div>
+            `).join('') : '<p class="git-empty-sm">No tags</p>'}
           </div>
         </div>
       </div>
@@ -861,6 +893,88 @@ document.addEventListener('click', async (e) => {
     }
     btn.disabled = false;
     btn.textContent = 'Generate Message';
+    return;
+  }
+
+  // ── Tag actions ──
+
+  // New tag form toggle
+  if (e.target.id === 'btn-git-new-tag' || e.target.closest('#btn-git-new-tag')) {
+    const form = document.getElementById('git-new-tag-form');
+    if (form) form.classList.toggle('hidden');
+    return;
+  }
+
+  // Cancel new tag
+  if (e.target.id === 'btn-git-cancel-tag' || e.target.closest('#btn-git-cancel-tag')) {
+    const form = document.getElementById('git-new-tag-form');
+    if (form) form.classList.add('hidden');
+    return;
+  }
+
+  // Create tag
+  if (e.target.id === 'btn-git-create-tag' || e.target.closest('#btn-git-create-tag')) {
+    const name = document.getElementById('git-tag-name')?.value?.trim();
+    const message = document.getElementById('git-tag-message')?.value?.trim();
+    if (!name) {
+      showToast('Tag name is required', 'warning');
+      return;
+    }
+    try {
+      await window.api.gitCreateTag(name, message || undefined);
+      showToast(`Tag ${name} created`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Create tag failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Push single tag
+  const pushTagBtn = e.target.closest('[data-push-tag]');
+  if (pushTagBtn) {
+    const name = pushTagBtn.dataset.pushTag;
+    pushTagBtn.disabled = true;
+    pushTagBtn.textContent = '...';
+    try {
+      await window.api.gitPushTag(name);
+      showToast(`Tag ${name} pushed`, 'success');
+    } catch (err) {
+      showToast(`Push tag failed: ${err.message}`, 'error');
+    }
+    pushTagBtn.disabled = false;
+    pushTagBtn.textContent = 'Push';
+    return;
+  }
+
+  // Delete tag
+  const deleteTagBtn = e.target.closest('[data-delete-tag]');
+  if (deleteTagBtn) {
+    const name = deleteTagBtn.dataset.deleteTag;
+    if (!confirm(`Delete tag "${name}"?`)) return;
+    try {
+      await window.api.gitDeleteTag(name);
+      showToast(`Tag ${name} deleted`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Delete tag failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Push all tags
+  if (e.target.id === 'btn-git-push-all-tags' || e.target.closest('#btn-git-push-all-tags')) {
+    const btn = document.getElementById('btn-git-push-all-tags');
+    btn.disabled = true;
+    btn.textContent = 'Pushing...';
+    try {
+      await window.api.gitPushAllTags();
+      showToast('All tags pushed', 'success');
+    } catch (err) {
+      showToast(`Push all tags failed: ${err.message}`, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Push All';
     return;
   }
 
@@ -2235,6 +2349,19 @@ async function renderSettings() {
         </div>
       </div>
 
+      <!-- Git -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">Git</h3>
+        <div class="settings-field">
+          <label class="settings-label">Merge tool</label>
+          <select class="settings-select" id="settings-git-merge-tool">
+            ${['default', 'vscode', 'webstorm', 'opendiff', 'meld', 'kdiff3', 'vimdiff'].map(t =>
+              `<option value="${t}" ${t === (settings.git?.mergeTool || 'default') ? 'selected' : ''}>${t === 'default' ? 'Default (git mergetool)' : t}</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+
       <!-- Mobile Companion -->
       <div class="settings-section">
         <h3 class="settings-section-title">Mobile Companion</h3>
@@ -2642,6 +2769,12 @@ async function saveSettingsFromForm() {
       pollInterval: parseInt(document.getElementById('settings-notif-poll')?.value) || 30
     }
   };
+
+  // Git settings
+  const mergeTool = document.getElementById('settings-git-merge-tool')?.value;
+  if (mergeTool) {
+    settings.git = { mergeTool };
+  }
 
   // Merge companion state from existing settings
   if (existingSettings?.companion) {
