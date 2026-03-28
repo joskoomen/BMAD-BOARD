@@ -445,7 +445,10 @@ async function renderGitView() {
       ${status.merging ? `
       <div class="git-merge-banner">
         <span class="git-merge-banner-text">Merge in progress${status.conflicted.length > 0 ? ` — ${status.conflicted.length} conflict(s)` : ''}</span>
-        <button class="btn btn-ghost btn-sm" id="btn-git-abort-merge">Abort Merge</button>
+        <div class="git-merge-banner-actions">
+          ${status.conflicted.length > 0 ? '<button class="btn btn-primary btn-sm" id="btn-git-resolve-llm">Resolve with LLM</button>' : ''}
+          <button class="btn btn-ghost btn-sm" id="btn-git-abort-merge">Abort Merge</button>
+        </div>
       </div>
       ` : ''}
 
@@ -682,6 +685,21 @@ document.addEventListener('click', async (e) => {
   // Refresh
   if (e.target.id === 'btn-git-refresh' || e.target.closest('#btn-git-refresh')) {
     renderGitView();
+    return;
+  }
+
+  // Resolve merge conflicts with LLM
+  if (e.target.id === 'btn-git-resolve-llm' || e.target.closest('#btn-git-resolve-llm')) {
+    try {
+      const status = await window.api.gitStatus();
+      const conflictFiles = status.conflicted || [];
+      const fileList = conflictFiles.join(', ');
+      const prompt = `There are merge conflicts in the following files: ${fileList}. Please help me resolve these merge conflicts. Look at each file, understand both sides of the conflict, and resolve them appropriately.`;
+      window.sendToTerminal(prompt);
+      showView('terminal');
+    } catch (err) {
+      showToast(`Failed to start LLM: ${err.message}`, 'error');
+    }
     return;
   }
 

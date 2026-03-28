@@ -1909,6 +1909,11 @@ html, body {
   font-weight: 600;
 }
 
+.git-merge-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* Git main content */
 .git-content {
   padding: 0 24px 24px;
