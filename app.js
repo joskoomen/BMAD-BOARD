@@ -1384,12 +1384,13 @@ async function renderSettings() {
   if (!container) return;
 
   // Load all data in parallel
-  const [settings, providers, projects, bmadConfig, bmadManifest] = await Promise.all([
+  const [settings, providers, projects, bmadConfig, bmadManifest, appVersion] = await Promise.all([
     window.api.getSettings(),
     window.api.getProviders(),
     window.api.getProjectList(),
     window.api.readBmadConfig(),
-    window.api.readBmadManifest()
+    window.api.readBmadManifest(),
+    window.api.getAppVersion()
   ]);
 
   settingsData = { ...settings };
@@ -1604,6 +1605,14 @@ async function renderSettings() {
         <button class="btn btn-primary btn-sm" id="btn-save-bmad" disabled>Save BMAD Config</button>
       </div>
       ` : ''}
+
+      <!-- About -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">About</h3>
+        <div class="settings-manifest">
+          <div class="settings-manifest-item"><span>BMAD Board</span><span>v${appVersion || '?'}</span></div>
+        </div>
+      </div>
 
       <!-- Save Button -->
       <div class="settings-actions">

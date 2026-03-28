@@ -247,6 +247,8 @@ function updateStoryStatusInYaml(projectPath, slug, newPhase) {
   fs.writeFileSync(filePath, content, 'utf-8');
 }
 
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 ipcMain.handle('new-window', () => {
   createWindow();
   return true;

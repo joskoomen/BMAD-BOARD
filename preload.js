@@ -9,6 +9,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  // App
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
   // Window
   newWindow: () => ipcRenderer.invoke('new-window'),
 
