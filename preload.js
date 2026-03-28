@@ -85,6 +85,15 @@ contextBridge.exposeInMainWorld('api', {
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
   gitHasGhCli: () => ipcRenderer.invoke('git:has-gh-cli'),
   gitRemoteUrl: () => ipcRenderer.invoke('git:remote-url'),
+  gitStashList: () => ipcRenderer.invoke('git:stash-list'),
+  gitStash: (message) => ipcRenderer.invoke('git:stash', message),
+  gitStashPop: (index) => ipcRenderer.invoke('git:stash-pop', index),
+  gitStashDrop: (index) => ipcRenderer.invoke('git:stash-drop', index),
+  gitDeleteBranch: (name, force) => ipcRenderer.invoke('git:delete-branch', name, force),
+  gitDeleteRemoteBranch: (name) => ipcRenderer.invoke('git:delete-remote-branch', name),
+  gitShowCommit: (hash) => ipcRenderer.invoke('git:show-commit', hash),
+  gitCommitDiff: (hash) => ipcRenderer.invoke('git:commit-diff', hash),
+  gitCommitFileDiff: (hash, file) => ipcRenderer.invoke('git:commit-file-diff', hash, file),
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),

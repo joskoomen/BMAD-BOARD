@@ -2509,3 +2509,185 @@ html, body {
   gap: 4px;
   margin-top: 2px;
 }
+
+/* ── Stash Panel ─────────────────────────────────────────────────────── */
+
+.git-stash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-stash-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.git-stash-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.git-stash-index {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.git-stash-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.git-stash-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.git-stash-item:hover .git-stash-actions {
+  opacity: 1;
+}
+
+/* ── Diff Viewer ─────────────────────────────────────────────────────── */
+
+.git-diff-viewer {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 8px 0;
+  background: var(--bg-primary);
+}
+
+.git-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.git-diff-content {
+  padding: 8px 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.git-diff-add {
+  color: var(--success);
+  display: block;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.git-diff-del {
+  color: var(--danger);
+  display: block;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.git-diff-hunk {
+  color: var(--accent);
+  display: block;
+}
+
+/* ── Commit Detail ───────────────────────────────────────────────────── */
+
+.git-commit-clickable {
+  cursor: pointer;
+}
+
+.git-commit-clickable:hover {
+  background: var(--bg-card-hover);
+}
+
+.git-commit-detail {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.git-commit-detail-header {
+  padding: 8px;
+  position: relative;
+}
+
+.git-commit-detail-header > .btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+.git-commit-detail-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.git-commit-detail-body {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  padding: 6px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+.git-commit-detail-files {
+  padding: 4px 8px;
+}
+
+.git-commit-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.git-commit-file-item:hover {
+  background: var(--bg-card-hover);
+}
+
+.git-file-name[data-diff-file] {
+  cursor: pointer;
+}
+
+.git-file-name[data-diff-file]:hover {
+  text-decoration: underline;
+  color: var(--accent);
+}
+
+/* ── Context Menu Danger ─────────────────────────────────────────────── */
+
+.git-context-menu-danger {
+  color: var(--danger);
+}
+
+.git-context-menu-danger:hover {
+  background: rgba(239, 68, 68, 0.15) !important;
+}

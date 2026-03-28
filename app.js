@@ -272,6 +272,24 @@ async function detectGitRepo() {
 
 // ── Git View ────────────────────────────────────────────────────────────
 
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function formatDiff(diff) {
+  return diff.split('\n').map(line => {
+    const escaped = escapeHtml(line);
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      return `<span class="git-diff-add">${escaped}</span>`;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      return `<span class="git-diff-del">${escaped}</span>`;
+    } else if (line.startsWith('@@')) {
+      return `<span class="git-diff-hunk">${escaped}</span>`;
+    }
+    return escaped;
+  }).join('\n');
+}
+
 function formatTimeAgo(dateStr) {
   const now = new Date();
   const date = new Date(dateStr);
@@ -299,12 +317,13 @@ async function renderGitView() {
   container.innerHTML = '<p class="git-loading">Loading git data...</p>';
 
   try {
-    const [branches, status, log, tags, hasGh] = await Promise.all([
+    const [branches, status, log, tags, hasGh, stashList] = await Promise.all([
       window.api.gitBranches(),
       window.api.gitStatus(),
       window.api.gitLog(25),
       window.api.gitTags(),
-      window.api.gitHasGhCli()
+      window.api.gitHasGhCli(),
+      window.api.gitStashList()
     ]);
 
     if (branches.error || status.error) {
@@ -405,18 +424,18 @@ async function renderGitView() {
     };
 
     const stagedHtml = staged.map(f => `
-      <div class="git-file-item git-file-staged" data-unstage-file="${f.path}" title="Click to unstage">
+      <div class="git-file-item git-file-staged">
         <input type="checkbox" class="git-file-check" checked data-unstage-file="${f.path}">
         <span class="git-file-status git-file-status-${f.index.toLowerCase()}">${f.index}</span>
-        <span class="git-file-name">${f.path}</span>
+        <span class="git-file-name" data-diff-file="${f.path}" data-diff-staged="true" title="Click to view diff">${f.path}</span>
       </div>
     `).join('');
 
     const unstagedHtml = unstaged.map(f => `
-      <div class="git-file-item git-file-unstaged" data-stage-file="${f.path}" title="Click to stage">
+      <div class="git-file-item git-file-unstaged">
         <input type="checkbox" class="git-file-check" data-stage-file="${f.path}">
         <span class="git-file-status git-file-status-${(f.working_dir || '?').toLowerCase()}">${f.working_dir || '?'}</span>
-        <span class="git-file-name">${f.path}</span>
+        <span class="git-file-name" data-diff-file="${f.path}" data-diff-staged="false" title="Click to view diff">${f.path}</span>
       </div>
     `).join('');
 
@@ -429,7 +448,7 @@ async function renderGitView() {
     const hasPushTarget = !!status.tracking;
 
     const commitsHtml = log.map(c => `
-      <div class="git-commit-item">
+      <div class="git-commit-item git-commit-clickable" data-show-commit="${c.hash}">
         <span class="git-commit-hash">${c.hashShort}</span>
         <span class="git-commit-message">${c.message}</span>
         <span class="git-commit-meta">${c.author} &middot; ${formatTimeAgo(c.date)}</span>
@@ -526,6 +545,30 @@ async function renderGitView() {
         </div>
         ` : '<div class="git-clean-state"><span class="git-clean-badge">Working tree clean</span></div>'}
 
+        <div id="git-diff-viewer" class="git-diff-viewer hidden"></div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Stash</h3>
+            <div class="git-panel-header-actions">
+              <span class="git-panel-count">${stashList.length}</span>
+              <button class="btn btn-ghost btn-xs" id="btn-git-stash" title="Stash current changes">Stash</button>
+            </div>
+          </div>
+          ${stashList.length > 0 ? `<div class="git-stash-list">
+            ${stashList.map(s => `
+              <div class="git-stash-item">
+                <span class="git-stash-index">stash@{${s.index}}</span>
+                <span class="git-stash-message">${s.message}</span>
+                <div class="git-stash-actions">
+                  <button class="btn btn-ghost btn-xs" data-stash-pop="${s.index}" title="Pop (apply & remove)">Pop</button>
+                  <button class="btn btn-ghost btn-xs git-tag-delete" data-stash-drop="${s.index}" title="Drop (discard)">Drop</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>` : '<p class="git-empty-sm">No stashes</p>'}
+        </div>
+
         <div class="git-panel">
           <div class="git-panel-header">
             <h3>Recent Commits</h3>
@@ -534,6 +577,7 @@ async function renderGitView() {
           <div class="git-commit-list">
             ${commitsHtml || '<p class="git-empty">No commits yet</p>'}
           </div>
+          <div id="git-commit-detail" class="git-commit-detail hidden"></div>
         </div>
 
         <div class="git-panel">
@@ -702,15 +746,21 @@ function showGitContextMenu(x, y, branch, currentBranch) {
   menu.style.top = `${y}px`;
 
   const isCurrentBranch = branch === currentBranch;
+  const isRemote = branch.includes('/');
   const items = [];
 
   if (!isCurrentBranch) {
     items.push({ label: `Checkout ${branch}`, action: 'checkout' });
     items.push({ label: `Merge ${branch} into ${currentBranch}`, action: 'merge' });
+    if (isRemote) {
+      items.push({ label: `Delete remote branch`, action: 'delete-remote', cls: 'danger' });
+    } else {
+      items.push({ label: `Delete branch`, action: 'delete', cls: 'danger' });
+    }
   }
 
   menu.innerHTML = items.map(item =>
-    `<div class="git-context-menu-item" data-action="${item.action}">${item.label}</div>`
+    `<div class="git-context-menu-item${item.cls ? ` git-context-menu-${item.cls}` : ''}" data-action="${item.action}">${item.label}</div>`
   ).join('');
 
   if (items.length === 0) {
@@ -741,6 +791,37 @@ function showGitContextMenu(x, y, branch, currentBranch) {
     } else if (item.dataset.action === 'merge') {
       if (!confirm(`Merge "${branch}" into "${currentBranch}"?`)) return;
       await performMerge(branch, currentBranch);
+    } else if (item.dataset.action === 'delete') {
+      if (!confirm(`Delete local branch "${branch}"?`)) return;
+      try {
+        await window.api.gitDeleteBranch(branch);
+        showToast(`Branch ${branch} deleted`, 'success');
+        renderGitView();
+      } catch (err) {
+        // Offer force delete for unmerged branches
+        if (err.message && err.message.includes('not fully merged')) {
+          if (confirm(`Branch "${branch}" is not fully merged. Force delete?`)) {
+            try {
+              await window.api.gitDeleteBranch(branch, true);
+              showToast(`Branch ${branch} force deleted`, 'success');
+              renderGitView();
+            } catch (err2) {
+              showToast(`Delete failed: ${err2.message}`, 'error');
+            }
+          }
+        } else {
+          showToast(`Delete failed: ${err.message}`, 'error');
+        }
+      }
+    } else if (item.dataset.action === 'delete-remote') {
+      if (!confirm(`Delete remote branch "${branch}"? This cannot be undone.`)) return;
+      try {
+        await window.api.gitDeleteRemoteBranch(branch);
+        showToast(`Remote branch ${branch} deleted`, 'success');
+        renderGitView();
+      } catch (err) {
+        showToast(`Delete remote failed: ${err.message}`, 'error');
+      }
     }
   });
 
@@ -1125,6 +1206,171 @@ document.addEventListener('click', async (e) => {
     } catch (err) {
       showToast(`Checkout failed: ${err.message}`, 'error');
     }
+    return;
+  }
+
+  // ── Stash ──
+  if (e.target.id === 'btn-git-stash' || e.target.closest('#btn-git-stash')) {
+    const message = prompt('Stash message (optional):');
+    if (message === null) return; // cancelled
+    try {
+      await window.api.gitStash(message || undefined);
+      showToast('Changes stashed', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Stash failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  const popBtn = e.target.closest('[data-stash-pop]');
+  if (popBtn) {
+    const index = parseInt(popBtn.dataset.stashPop);
+    try {
+      await window.api.gitStashPop(index);
+      showToast('Stash popped', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Stash pop failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  const dropBtn = e.target.closest('[data-stash-drop]');
+  if (dropBtn) {
+    const index = parseInt(dropBtn.dataset.stashDrop);
+    if (!confirm(`Drop stash@{${index}}?`)) return;
+    try {
+      await window.api.gitStashDrop(index);
+      showToast('Stash dropped', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Stash drop failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Inline Diff Viewer ──
+  const diffTarget = e.target.closest('[data-diff-file]');
+  if (diffTarget && !e.target.classList.contains('git-file-check')) {
+    const file = diffTarget.dataset.diffFile;
+    const staged = diffTarget.dataset.diffStaged === 'true';
+    const viewer = document.getElementById('git-diff-viewer');
+    if (!viewer) return;
+
+    // Toggle off if already showing this file
+    if (viewer.dataset.currentFile === file && !viewer.classList.contains('hidden')) {
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      return;
+    }
+
+    viewer.innerHTML = '<p class="git-loading">Loading diff...</p>';
+    viewer.classList.remove('hidden');
+    viewer.dataset.currentFile = file;
+
+    try {
+      const diff = await window.api.gitDiffFile(file, staged);
+      if (!diff.trim()) {
+        viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs" id="btn-close-diff">&times;</button></div><p class="git-empty-sm">No diff available (new untracked file)</p>`;
+      } else {
+        viewer.innerHTML = `<div class="git-diff-header"><span>${file} ${staged ? '(staged)' : ''}</span><button class="btn btn-ghost btn-xs" id="btn-close-diff">&times;</button></div><pre class="git-diff-content">${formatDiff(diff)}</pre>`;
+      }
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs" id="btn-close-diff">&times;</button></div><p class="git-empty-sm">Could not load diff</p>`;
+    }
+    return;
+  }
+
+  // Close diff viewer
+  if (e.target.id === 'btn-close-diff' || e.target.closest('#btn-close-diff')) {
+    const viewer = document.getElementById('git-diff-viewer');
+    if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
+    return;
+  }
+
+  // ── Commit Detail ──
+  const commitItem = e.target.closest('[data-show-commit]');
+  if (commitItem) {
+    const hash = commitItem.dataset.showCommit;
+    const detail = document.getElementById('git-commit-detail');
+    if (!detail) return;
+
+    // Toggle off if already showing this commit
+    if (detail.dataset.currentHash === hash && !detail.classList.contains('hidden')) {
+      detail.classList.add('hidden');
+      detail.dataset.currentHash = '';
+      return;
+    }
+
+    detail.innerHTML = '<p class="git-loading">Loading commit...</p>';
+    detail.classList.remove('hidden');
+    detail.dataset.currentHash = hash;
+
+    try {
+      const info = await window.api.gitShowCommit(hash);
+      const filesHtml = info.files.map(f => {
+        const statusCls = { A: 'a', M: 'm', D: 'd', R: 'r' }[f.status] || '';
+        return `<div class="git-commit-file-item" data-commit-file-diff="${hash}" data-commit-file="${f.path}">
+          <span class="git-file-status git-file-status-${statusCls}">${f.status}</span>
+          <span class="git-file-name">${f.path}</span>
+        </div>`;
+      }).join('');
+
+      detail.innerHTML = `
+        <div class="git-commit-detail-header">
+          <button class="btn btn-ghost btn-xs" id="btn-close-commit-detail">&times;</button>
+          <strong>${info.subject}</strong>
+          <div class="git-commit-detail-meta">${info.hashShort} &middot; ${info.author} &middot; ${info.date}</div>
+          ${info.body ? `<pre class="git-commit-detail-body">${info.body}</pre>` : ''}
+        </div>
+        <div class="git-commit-detail-files">${filesHtml}</div>
+        <div id="git-commit-file-diff-viewer" class="git-diff-viewer hidden"></div>
+      `;
+    } catch (err) {
+      detail.innerHTML = `<p class="git-empty-sm">Could not load commit: ${err.message}</p>`;
+    }
+    return;
+  }
+
+  // Close commit detail
+  if (e.target.id === 'btn-close-commit-detail' || e.target.closest('#btn-close-commit-detail')) {
+    const detail = document.getElementById('git-commit-detail');
+    if (detail) { detail.classList.add('hidden'); detail.dataset.currentHash = ''; }
+    return;
+  }
+
+  // Commit file diff
+  const commitFileDiffEl = e.target.closest('[data-commit-file-diff]');
+  if (commitFileDiffEl) {
+    const hash = commitFileDiffEl.dataset.commitFileDiff;
+    const file = commitFileDiffEl.dataset.commitFile;
+    const viewer = document.getElementById('git-commit-file-diff-viewer');
+    if (!viewer) return;
+
+    if (viewer.dataset.currentFile === file && !viewer.classList.contains('hidden')) {
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      return;
+    }
+
+    viewer.innerHTML = '<p class="git-loading">Loading diff...</p>';
+    viewer.classList.remove('hidden');
+    viewer.dataset.currentFile = file;
+
+    try {
+      const diff = await window.api.gitCommitFileDiff(hash, file);
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><pre class="git-diff-content">${formatDiff(diff)}</pre>`;
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">Could not load diff</p>`;
+    }
+    return;
+  }
+
+  // Close commit file diff
+  if (e.target.classList.contains('btn-close-commit-file-diff') || e.target.closest('.btn-close-commit-file-diff')) {
+    const viewer = document.getElementById('git-commit-file-diff-viewer');
+    if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
     return;
   }
 });

@@ -957,6 +957,72 @@ ipcMain.handle('git:remote-url', async (event) => {
   return gm.getRemoteUrl();
 });
 
+// Stash
+ipcMain.handle('git:stash-list', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return [];
+  const gm = new GitManager(projectPath);
+  return gm.stashList();
+});
+
+ipcMain.handle('git:stash', async (event, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.stash(message);
+});
+
+ipcMain.handle('git:stash-pop', async (event, index) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.stashPop(index);
+});
+
+ipcMain.handle('git:stash-drop', async (event, index) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.stashDrop(index);
+});
+
+// Branch delete
+ipcMain.handle('git:delete-branch', async (event, name, force) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.deleteBranch(name, force);
+});
+
+ipcMain.handle('git:delete-remote-branch', async (event, name) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.deleteRemoteBranch(name);
+});
+
+// Commit detail
+ipcMain.handle('git:show-commit', async (event, hash) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.showCommit(hash);
+});
+
+ipcMain.handle('git:commit-diff', async (event, hash) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.commitDiff(hash);
+});
+
+ipcMain.handle('git:commit-file-diff', async (event, hash, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.commitFileDiff(hash, file);
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;

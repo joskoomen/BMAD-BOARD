@@ -751,3 +751,181 @@ describe('GitManager.getRemoteUrl', () => {
     fs.rmSync(remoteDir, { recursive: true, force: true });
   });
 });
+
+// ── stash ─────────────────────────────────────────────────────────────
+
+describe('GitManager.stash', () => {
+  it('stashes and lists changes', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    // Create unstaged changes
+    writeFile('file.txt', 'modified');
+
+    const gm = new GitManager(tmpDir);
+    await gm.stash('my stash');
+
+    const list = await gm.stashList();
+    expect(list.length).toBe(1);
+    expect(list[0].message).toContain('my stash');
+
+    // Working tree should be clean after stash
+    const status = await gm.status();
+    expect(status.isClean).toBe(true);
+  });
+
+  it('stashes untracked files', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('new-file.txt', 'untracked');
+
+    const gm = new GitManager(tmpDir);
+    await gm.stash();
+
+    const status = await gm.status();
+    expect(status.files.length).toBe(0);
+  });
+
+  it('pops a stash entry', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'modified');
+
+    const gm = new GitManager(tmpDir);
+    await gm.stash('test');
+    await gm.stashPop(0);
+
+    const status = await gm.status();
+    expect(status.isClean).toBe(false);
+
+    const list = await gm.stashList();
+    expect(list.length).toBe(0);
+  });
+
+  it('drops a stash entry', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'modified');
+
+    const gm = new GitManager(tmpDir);
+    await gm.stash('to-drop');
+    await gm.stashDrop(0);
+
+    const list = await gm.stashList();
+    expect(list.length).toBe(0);
+  });
+
+  it('returns empty list when no stashes', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    const list = await gm.stashList();
+    expect(list).toEqual([]);
+  });
+});
+
+// ── deleteBranch ──────────────────────────────────────────────────────
+
+describe('GitManager.deleteBranch', () => {
+  it('deletes a merged local branch', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    execSync('git checkout -b to-delete', { cwd: tmpDir, stdio: 'ignore' });
+    execSync('git checkout master || git checkout main', { cwd: tmpDir, stdio: 'ignore', shell: true });
+
+    const gm = new GitManager(tmpDir);
+    await gm.deleteBranch('to-delete');
+
+    const branches = await gm.branches();
+    const names = branches.local.map(b => b.name);
+    expect(names).not.toContain('to-delete');
+  });
+
+  it('force deletes an unmerged branch', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    execSync('git checkout -b unmerged', { cwd: tmpDir, stdio: 'ignore' });
+    writeFile('unmerged.txt', 'content');
+    gitAdd(tmpDir, 'unmerged.txt');
+    gitCommit(tmpDir, 'unmerged commit');
+    execSync('git checkout master || git checkout main', { cwd: tmpDir, stdio: 'ignore', shell: true });
+
+    const gm = new GitManager(tmpDir);
+    // Normal delete should fail
+    await expect(gm.deleteBranch('unmerged')).rejects.toThrow();
+    // Force delete should work
+    await gm.deleteBranch('unmerged', true);
+
+    const branches = await gm.branches();
+    const names = branches.local.map(b => b.name);
+    expect(names).not.toContain('unmerged');
+  });
+});
+
+// ── showCommit ────────────────────────────────────────────────────────
+
+describe('GitManager.showCommit', () => {
+  it('returns commit details with file changes', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    writeFile('new.txt', 'new content');
+    writeFile('file.txt', 'changed');
+    gitAdd(tmpDir, '.');
+    gitCommit(tmpDir, 'add and modify files');
+
+    const gm = new GitManager(tmpDir);
+    const log = await gm.log(1);
+    const info = await gm.showCommit(log[0].hash);
+
+    expect(info.subject).toBe('add and modify files');
+    expect(info.author).toBe('Test User');
+    expect(info.files.length).toBe(2);
+    expect(info.files.some(f => f.path === 'new.txt' && f.status === 'A')).toBe(true);
+    expect(info.files.some(f => f.path === 'file.txt' && f.status === 'M')).toBe(true);
+  });
+});
+
+// ── commitFileDiff ───────────────────────────────────────────────────
+
+describe('GitManager.commitFileDiff', () => {
+  it('returns diff for a specific file in a commit', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello\n');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'world\n');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'update');
+
+    const gm = new GitManager(tmpDir);
+    const log = await gm.log(1);
+    const diff = await gm.commitFileDiff(log[0].hash, 'file.txt');
+
+    expect(diff).toContain('-hello');
+    expect(diff).toContain('+world');
+  });
+});
