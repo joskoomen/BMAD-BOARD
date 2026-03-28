@@ -236,6 +236,70 @@ describe('GitManager.checkout', () => {
   });
 });
 
+// ── createBranch ─────────────────────────────────────────────────────
+
+describe('GitManager.createBranch', () => {
+  it('creates a new branch from current HEAD', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    const gm = new GitManager(tmpDir);
+    const status = await gm.createBranch('feature/new-thing');
+
+    expect(status.current).toBe('feature/new-thing');
+  });
+
+  it('creates a branch from a specific start point', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    // Create a second commit on master
+    writeFile('file2.txt', 'world');
+    gitAdd(tmpDir, 'file2.txt');
+    gitCommit(tmpDir, 'second commit');
+
+    // Create branch from first commit (master~1)
+    const gm = new GitManager(tmpDir);
+    const status = await gm.createBranch('hotfix/from-first', 'HEAD~1');
+
+    expect(status.current).toBe('hotfix/from-first');
+
+    // Verify we're at the first commit (file2 shouldn't exist in working tree)
+    const log = await gm.log(1);
+    expect(log[0].message).toBe('initial commit');
+  });
+
+  it('creates a branch from another branch', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    execSync('git branch develop', { cwd: tmpDir, stdio: 'ignore' });
+
+    const gm = new GitManager(tmpDir);
+    const status = await gm.createBranch('feature/from-develop', 'develop');
+
+    expect(status.current).toBe('feature/from-develop');
+  });
+
+  it('throws for duplicate branch name', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    execSync('git branch feature/existing', { cwd: tmpDir, stdio: 'ignore' });
+
+    const gm = new GitManager(tmpDir);
+    await expect(gm.createBranch('feature/existing')).rejects.toThrow();
+  });
+});
+
 // ── fetch ─────────────────────────────────────────────────────────────
 
 describe('GitManager.fetch', () => {

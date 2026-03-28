@@ -802,6 +802,13 @@ ipcMain.handle('git:checkout', async (event, branch) => {
   return gm.checkout(branch);
 });
 
+ipcMain.handle('git:create-branch', async (event, name, startPoint) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.createBranch(name, startPoint);
+});
+
 ipcMain.handle('git:fetch', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };

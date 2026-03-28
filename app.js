@@ -345,7 +345,31 @@ async function renderGitView() {
 
       sidebarBranches.innerHTML = `
         <div class="git-sidebar-group">
-          <div class="git-sidebar-group-title">Local <span class="git-panel-count">${branches.local.length}</span></div>
+          <div class="git-sidebar-group-title">Local <span class="git-panel-count">${branches.local.length}</span>
+            <button class="btn btn-ghost btn-xs git-sidebar-new-branch-btn" id="btn-git-new-branch" title="New branch">+</button>
+          </div>
+          <div id="git-new-branch-form" class="git-new-branch-form hidden">
+            <select id="git-branch-prefix" class="git-branch-prefix-select">
+              <option value="">no prefix</option>
+              <option value="feature/">feature/</option>
+              <option value="bugfix/">bugfix/</option>
+              <option value="hotfix/">hotfix/</option>
+              <option value="release/">release/</option>
+              <option value="chore/">chore/</option>
+              <option value="refactor/">refactor/</option>
+            </select>
+            <input type="text" id="git-branch-name" class="git-branch-name-input" placeholder="branch-name">
+            <div class="git-branch-start-row">
+              <label class="git-branch-start-label">from</label>
+              <select id="git-branch-start" class="git-branch-start-select">
+                ${branches.local.map(b => `<option value="${b.name}" ${b.current ? 'selected' : ''}>${b.name}${b.current ? ' (HEAD)' : ''}</option>`).join('')}
+              </select>
+            </div>
+            <div class="git-branch-form-actions">
+              <button class="btn btn-ghost btn-xs" id="btn-git-cancel-branch">Cancel</button>
+              <button class="btn btn-primary btn-xs" id="btn-git-create-branch">Create</button>
+            </div>
+          </div>
           ${localHtml}
         </div>
         <div class="git-sidebar-group">
@@ -1036,6 +1060,40 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'btn-gh-install-info' || e.target.closest('#btn-gh-install-info')) {
     e.preventDefault();
     window.api.openExternal('https://cli.github.com/');
+    return;
+  }
+
+  // New branch form toggle
+  if (e.target.id === 'btn-git-new-branch' || e.target.closest('#btn-git-new-branch')) {
+    const form = document.getElementById('git-new-branch-form');
+    if (form) form.classList.toggle('hidden');
+    return;
+  }
+
+  // Cancel new branch
+  if (e.target.id === 'btn-git-cancel-branch' || e.target.closest('#btn-git-cancel-branch')) {
+    const form = document.getElementById('git-new-branch-form');
+    if (form) form.classList.add('hidden');
+    return;
+  }
+
+  // Create branch
+  if (e.target.id === 'btn-git-create-branch' || e.target.closest('#btn-git-create-branch')) {
+    const prefix = document.getElementById('git-branch-prefix')?.value || '';
+    const name = document.getElementById('git-branch-name')?.value?.trim();
+    const startPoint = document.getElementById('git-branch-start')?.value;
+    if (!name) {
+      showToast('Branch name is required', 'warning');
+      return;
+    }
+    const fullName = prefix + name;
+    try {
+      await window.api.gitCreateBranch(fullName, startPoint || undefined);
+      showToast(`Branch ${fullName} created and checked out`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Create branch failed: ${err.message}`, 'error');
+    }
     return;
   }
 

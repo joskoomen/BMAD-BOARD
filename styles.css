@@ -2432,3 +2432,80 @@ html, body {
 .git-link:hover {
   text-decoration: underline;
 }
+
+/* ── New Branch Form ─────────────────────────────────────────────────── */
+
+.git-sidebar-new-branch-btn {
+  margin-left: auto;
+  font-size: 14px !important;
+  line-height: 1;
+  padding: 0 4px !important;
+}
+
+.git-new-branch-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  margin: 4px 0 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.git-branch-prefix-select {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.git-branch-name-input {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  box-sizing: border-box;
+}
+
+.git-branch-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.git-branch-start-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.git-branch-start-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.git-branch-start-select {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.git-branch-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 2px;
+}

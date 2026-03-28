@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('api', {
   gitBranches: () => ipcRenderer.invoke('git:branches'),
   gitLog: (limit) => ipcRenderer.invoke('git:log', limit),
   gitCheckout: (branch) => ipcRenderer.invoke('git:checkout', branch),
+  gitCreateBranch: (name, startPoint) => ipcRenderer.invoke('git:create-branch', name, startPoint),
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitPull: (remote, branch) => ipcRenderer.invoke('git:pull', remote, branch),
   gitPush: (remote, branch) => ipcRenderer.invoke('git:push', remote, branch),
