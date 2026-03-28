@@ -12,7 +12,10 @@
     "dist:win": "electron-builder --win nsis",
     "dist:linux": "electron-builder --linux AppImage deb",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version"
   },
   "build": {
     "appId": "com.bmad.board",
