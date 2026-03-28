@@ -103,6 +103,8 @@ contextBridge.exposeInMainWorld('api', {
   gitRebaseContinue: () => ipcRenderer.invoke('git:rebase-continue'),
   gitIsRebasing: () => ipcRenderer.invoke('git:is-rebasing'),
   gitFileLog: (file, limit) => ipcRenderer.invoke('git:file-log', file, limit),
+  gitReadConflictFile: (file) => ipcRenderer.invoke('git:read-conflict-file', file),
+  gitResolveConflict: (file, content) => ipcRenderer.invoke('git:resolve-conflict', file, content),
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),

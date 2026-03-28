@@ -1091,6 +1091,21 @@ ipcMain.handle('git:file-log', async (event, file, limit) => {
   return gm.fileLog(file, limit);
 });
 
+// Conflict resolution
+ipcMain.handle('git:read-conflict-file', async (event, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.readConflictFile(file);
+});
+
+ipcMain.handle('git:resolve-conflict', async (event, file, content) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.resolveConflict(file, content);
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;

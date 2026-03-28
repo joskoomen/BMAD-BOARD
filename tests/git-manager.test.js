@@ -1109,3 +1109,49 @@ describe('GitManager.fileLog', () => {
     expect(history).toEqual([]);
   });
 });
+
+// ── readConflictFile / resolveConflict ───────────────────────────────
+
+describe('GitManager.resolveConflict', () => {
+  it('reads a conflicted file and resolves it', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'original');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    // Create conflicting changes
+    execSync('git checkout -b conflict-branch', { cwd: tmpDir, stdio: 'ignore' });
+    writeFile('file.txt', 'version A');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'change A');
+
+    execSync('git checkout master || git checkout main', { cwd: tmpDir, stdio: 'ignore', shell: true });
+    writeFile('file.txt', 'version B');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'change B');
+
+    const gm = new GitManager(tmpDir);
+    await gm.merge('conflict-branch');
+
+    // Read the conflicted file — should contain markers
+    const content = await gm.readConflictFile('file.txt');
+    expect(content).toContain('<<<<<<<');
+    expect(content).toContain('=======');
+    expect(content).toContain('>>>>>>>');
+
+    // Resolve it
+    await gm.resolveConflict('file.txt', 'resolved content');
+
+    // File should be staged and no longer conflicted
+    const status = await gm.status();
+    const conflicted = status.conflicted || [];
+    expect(conflicted).not.toContain('file.txt');
+
+    // Verify file content
+    const resolved = fs.readFileSync(path.join(tmpDir, 'file.txt'), 'utf8');
+    expect(resolved).toBe('resolved content');
+
+    // Cleanup
+    await gm.abortMerge().catch(() => {});
+  });
+});

@@ -321,6 +321,111 @@ function formatDiff(diff) {
   }).join('\n');
 }
 
+/**
+ * Parse git conflict markers into structured blocks.
+ * Returns array of { type: 'clean'|'conflict', content, ours, theirs }
+ */
+function parseConflicts(content) {
+  const blocks = [];
+  const lines = content.split('\n');
+  let current = [];
+  let inConflict = false;
+  let ours = [];
+  let theirs = [];
+  let inTheirs = false;
+
+  for (const line of lines) {
+    if (line.startsWith('<<<<<<<')) {
+      // Flush any clean lines
+      if (current.length) {
+        blocks.push({ type: 'clean', content: current.join('\n') });
+        current = [];
+      }
+      inConflict = true;
+      inTheirs = false;
+      ours = [];
+      theirs = [];
+    } else if (line.startsWith('=======') && inConflict) {
+      inTheirs = true;
+    } else if (line.startsWith('>>>>>>>') && inConflict) {
+      blocks.push({
+        type: 'conflict',
+        ours: ours.join('\n'),
+        theirs: theirs.join('\n')
+      });
+      inConflict = false;
+      inTheirs = false;
+    } else if (inConflict) {
+      if (inTheirs) {
+        theirs.push(line);
+      } else {
+        ours.push(line);
+      }
+    } else {
+      current.push(line);
+    }
+  }
+
+  if (current.length) {
+    blocks.push({ type: 'clean', content: current.join('\n') });
+  }
+
+  return blocks;
+}
+
+/**
+ * Render the conflict viewer HTML for a file.
+ */
+function renderConflictViewer(fileName, blocks) {
+  let html = `<div class="git-diff-header">
+    <span>Conflicts: ${escapeHtml(fileName)}</span>
+    <div class="git-conflict-header-actions">
+      <button class="btn btn-ghost btn-xs" data-conflict-accept-all="ours" title="Accept all ours">Accept All Ours</button>
+      <button class="btn btn-ghost btn-xs" data-conflict-accept-all="theirs" title="Accept all theirs">Accept All Theirs</button>
+      <button class="btn btn-ghost btn-xs" id="btn-close-conflict">&times;</button>
+    </div>
+  </div>`;
+
+  html += '<div class="git-conflict-blocks">';
+
+  blocks.forEach((block, i) => {
+    if (block.type === 'clean') {
+      const lines = block.content.split('\n');
+      // Show abbreviated clean blocks (first/last 3 lines if long)
+      if (lines.length > 6) {
+        html += `<pre class="git-conflict-clean">${escapeHtml(lines.slice(0, 3).join('\n'))}\n<span class="git-conflict-fold">... ${lines.length - 6} lines hidden ...</span>\n${escapeHtml(lines.slice(-3).join('\n'))}</pre>`;
+      } else {
+        html += `<pre class="git-conflict-clean">${escapeHtml(block.content)}</pre>`;
+      }
+    } else {
+      html += `<div class="git-conflict-block" data-conflict-index="${i}">
+        <div class="git-conflict-actions">
+          <button class="btn btn-sm git-conflict-btn-ours" data-resolve-block="${i}" data-resolve-choice="ours">Accept Ours</button>
+          <button class="btn btn-sm git-conflict-btn-both" data-resolve-block="${i}" data-resolve-choice="both">Accept Both</button>
+          <button class="btn btn-sm git-conflict-btn-theirs" data-resolve-block="${i}" data-resolve-choice="theirs">Accept Theirs</button>
+        </div>
+        <div class="git-conflict-sides">
+          <div class="git-conflict-side git-conflict-ours">
+            <div class="git-conflict-side-label">Ours (current)</div>
+            <pre>${escapeHtml(block.ours)}</pre>
+          </div>
+          <div class="git-conflict-side git-conflict-theirs">
+            <div class="git-conflict-side-label">Theirs (incoming)</div>
+            <pre>${escapeHtml(block.theirs)}</pre>
+          </div>
+        </div>
+      </div>`;
+    }
+  });
+
+  html += '</div>';
+  html += `<div class="git-conflict-save">
+    <button class="btn btn-primary btn-sm" id="btn-git-save-conflict" data-conflict-file="${escapeHtml(fileName)}">Save &amp; Mark Resolved</button>
+  </div>`;
+
+  return html;
+}
+
 function gitBtnLoading(btn, label) {
   btn.disabled = true;
   btn.innerHTML = `<span class="git-spinner"></span> ${label}`;
@@ -544,6 +649,15 @@ async function renderGitView() {
           ${status.conflicted.length > 0 ? '<button class="btn btn-primary btn-sm" id="btn-git-resolve-llm">Resolve with LLM</button>' : ''}
           <button class="btn btn-ghost btn-sm" id="btn-git-abort-merge">Abort Merge</button>
         </div>
+        ${status.conflicted.length > 0 ? `
+        <div class="git-conflict-files">
+          ${status.conflicted.map(f => `
+            <div class="git-conflict-file" data-conflict-file="${f}">
+              <span class="git-file-status git-file-status-u">U</span>
+              <span class="git-file-name">${f}</span>
+            </div>
+          `).join('')}
+        </div>` : ''}
       </div>
       ` : ''}
 
@@ -555,8 +669,19 @@ async function renderGitView() {
           <button class="btn btn-primary btn-sm" id="btn-git-rebase-continue">Continue Rebase</button>
           <button class="btn btn-ghost btn-sm" id="btn-git-rebase-abort">Abort Rebase</button>
         </div>
+        ${status.conflicted.length > 0 ? `
+        <div class="git-conflict-files">
+          ${status.conflicted.map(f => `
+            <div class="git-conflict-file" data-conflict-file="${f}">
+              <span class="git-file-status git-file-status-u">U</span>
+              <span class="git-file-name">${f}</span>
+            </div>
+          `).join('')}
+        </div>` : ''}
       </div>
       ` : ''}
+
+      <div id="git-conflict-viewer" class="git-conflict-viewer hidden"></div>
 
       <div class="git-panels">
         ${status.files.length > 0 || staged.length > 0 ? `
@@ -1550,6 +1675,128 @@ document.addEventListener('click', async (e) => {
       }
     } catch (err) {
       viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">Could not load history</p>`;
+    }
+    return;
+  }
+
+  // ── Conflict Viewer ──
+  const conflictFileEl = e.target.closest('[data-conflict-file]');
+  if (conflictFileEl && !conflictFileEl.closest('.git-conflict-save')) {
+    const file = conflictFileEl.dataset.conflictFile;
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer) return;
+
+    // Toggle off if already showing
+    if (viewer.dataset.currentFile === file && !viewer.classList.contains('hidden')) {
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      return;
+    }
+
+    viewer.innerHTML = '<div class="git-loading"><span class="git-spinner"></span> Loading conflict...</div>';
+    viewer.classList.remove('hidden');
+    viewer.dataset.currentFile = file;
+
+    try {
+      const content = await window.api.gitReadConflictFile(file);
+      const blocks = parseConflicts(content);
+      viewer.innerHTML = renderConflictViewer(file, blocks);
+      // Store blocks and original content for resolution
+      viewer._blocks = blocks;
+      viewer._fileName = file;
+      viewer._resolutions = {};
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs" id="btn-close-conflict">&times;</button></div><p class="git-empty-sm">Could not load file: ${err.message}</p>`;
+    }
+    return;
+  }
+
+  // Close conflict viewer
+  if (e.target.id === 'btn-close-conflict' || e.target.closest('#btn-close-conflict')) {
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
+    return;
+  }
+
+  // Resolve single conflict block
+  const resolveBtn = e.target.closest('[data-resolve-block]');
+  if (resolveBtn) {
+    const index = parseInt(resolveBtn.dataset.resolveBlock);
+    const choice = resolveBtn.dataset.resolveChoice;
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer || !viewer._blocks) return;
+
+    viewer._resolutions[index] = choice;
+
+    // Visual feedback — highlight chosen, dim the block
+    const block = viewer.querySelector(`[data-conflict-index="${index}"]`);
+    if (block) {
+      block.classList.add('git-conflict-resolved');
+      block.dataset.resolvedChoice = choice;
+      // Update button states
+      block.querySelectorAll('[data-resolve-block]').forEach(b => {
+        b.classList.toggle('git-conflict-btn-active', b.dataset.resolveChoice === choice);
+      });
+    }
+    return;
+  }
+
+  // Accept all ours/theirs
+  const acceptAllBtn = e.target.closest('[data-conflict-accept-all]');
+  if (acceptAllBtn) {
+    const choice = acceptAllBtn.dataset.conflictAcceptAll;
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer || !viewer._blocks) return;
+
+    viewer._blocks.forEach((block, i) => {
+      if (block.type === 'conflict') {
+        viewer._resolutions[i] = choice;
+        const el = viewer.querySelector(`[data-conflict-index="${i}"]`);
+        if (el) {
+          el.classList.add('git-conflict-resolved');
+          el.dataset.resolvedChoice = choice;
+          el.querySelectorAll('[data-resolve-block]').forEach(b => {
+            b.classList.toggle('git-conflict-btn-active', b.dataset.resolveChoice === choice);
+          });
+        }
+      }
+    });
+    showToast(`All conflicts set to "${choice}"`, 'info');
+    return;
+  }
+
+  // Save resolved conflict
+  if (e.target.id === 'btn-git-save-conflict' || e.target.closest('#btn-git-save-conflict')) {
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer || !viewer._blocks) return;
+
+    // Check all conflicts are resolved
+    const conflictBlocks = viewer._blocks.map((b, i) => ({ ...b, index: i })).filter(b => b.type === 'conflict');
+    const unresolved = conflictBlocks.filter(b => !viewer._resolutions[b.index]);
+    if (unresolved.length > 0) {
+      showToast(`${unresolved.length} conflict(s) not yet resolved`, 'warning');
+      return;
+    }
+
+    // Build resolved content
+    const resolved = viewer._blocks.map((block, i) => {
+      if (block.type === 'clean') return block.content;
+      const choice = viewer._resolutions[i];
+      if (choice === 'ours') return block.ours;
+      if (choice === 'theirs') return block.theirs;
+      if (choice === 'both') return block.ours + '\n' + block.theirs;
+      return block.ours; // fallback
+    }).join('\n');
+
+    const file = viewer._fileName;
+    try {
+      await window.api.gitResolveConflict(file, resolved);
+      showToast(`${file} resolved and staged`, 'success');
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      renderGitView();
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`, 'error');
     }
     return;
   }
