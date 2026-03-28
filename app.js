@@ -1311,6 +1311,11 @@ function setupProjectSelector() {
     const selectedPath = e.target.value;
     if (!selectedPath) return;
 
+    // Close old project's tabs
+    if (typeof window.closeAllTabs === 'function') {
+      window.closeAllTabs();
+    }
+
     const data = await window.api.loadProjectByPath(selectedPath);
     if (data && data.found) {
       projectData = data;
@@ -1318,6 +1323,10 @@ function setupProjectSelector() {
       await refreshProjectList();
       showView('epics');
       startPhasePoller();
+      // Restore new project's saved tabs
+      if (typeof window.restoreTabState === 'function') {
+        window.restoreTabState();
+      }
     } else {
       projectData = null;
       stopPhasePoller();
@@ -1345,6 +1354,12 @@ function setupInlineProjectSelect(selectId) {
   select.addEventListener('change', async (e) => {
     const selectedPath = e.target.value;
     if (!selectedPath) return;
+
+    // Close old project's tabs
+    if (typeof window.closeAllTabs === 'function') {
+      window.closeAllTabs();
+    }
+
     const data = await window.api.loadProjectByPath(selectedPath);
     if (data && data.found) {
       projectData = data;
@@ -1352,6 +1367,10 @@ function setupInlineProjectSelect(selectId) {
       await refreshProjectList();
       showView('epics');
       startPhasePoller();
+      // Restore new project's saved tabs
+      if (typeof window.restoreTabState === 'function') {
+        window.restoreTabState();
+      }
     }
   });
 }
