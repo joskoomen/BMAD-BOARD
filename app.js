@@ -186,6 +186,8 @@ function setupNavigation() {
         if (projectData) sv('documents');
       } else if (view === 'history') {
         sv('history');
+      } else if (view === 'git') {
+        if (isGitRepo) sv('git');
       } else if (view === 'settings') {
         sv('settings');
       } else if (view === 'terminal') {
