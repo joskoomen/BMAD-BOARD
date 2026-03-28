@@ -936,6 +936,20 @@ ipcMain.handle('git:commit', async (event, message) => {
   return gm.commit(message);
 });
 
+ipcMain.handle('git:has-gh-cli', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return false;
+  const gm = new GitManager(projectPath);
+  return gm.hasGhCli();
+});
+
+ipcMain.handle('git:remote-url', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return null;
+  const gm = new GitManager(projectPath);
+  return gm.getRemoteUrl();
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;

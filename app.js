@@ -299,11 +299,12 @@ async function renderGitView() {
   container.innerHTML = '<p class="git-loading">Loading git data...</p>';
 
   try {
-    const [branches, status, log, tags] = await Promise.all([
+    const [branches, status, log, tags, hasGh] = await Promise.all([
       window.api.gitBranches(),
       window.api.gitStatus(),
       window.api.gitLog(25),
-      window.api.gitTags()
+      window.api.gitTags(),
+      window.api.gitHasGhCli()
     ]);
 
     if (branches.error || status.error) {
@@ -541,6 +542,40 @@ async function renderGitView() {
             `).join('') : '<p class="git-empty-sm">No tags</p>'}
           </div>
         </div>
+
+        ${hasGh ? `
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Pull Request</h3>
+          </div>
+          <div class="git-pr-form">
+            <input type="text" id="git-pr-title" class="git-conv-input" placeholder="PR title (leave empty for interactive mode)">
+            <textarea id="git-pr-body" class="git-commit-textarea" rows="3" placeholder="PR description (optional)"></textarea>
+            <div class="git-pr-options">
+              <label class="git-pr-option">
+                <input type="checkbox" id="git-pr-draft"> Draft PR
+              </label>
+              <select id="git-pr-base" class="git-conv-select git-pr-base-select">
+                ${branches.local.filter(b => !b.current).map(b =>
+                  `<option value="${b.name}" ${b.name === 'main' || b.name === 'master' ? 'selected' : ''}>${b.name}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div class="git-commit-actions">
+              <button class="btn btn-primary btn-sm" id="btn-git-create-pr">Create Pull Request</button>
+            </div>
+          </div>
+        </div>
+        ` : `
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Pull Request</h3>
+          </div>
+          <p class="git-empty-sm">Install and authenticate <code>gh</code> CLI to create PRs.<br>
+            <a href="#" id="btn-gh-install-info" class="git-link">How to install gh CLI</a>
+          </p>
+        </div>
+        `}
       </div>
     `;
 
@@ -975,6 +1010,32 @@ document.addEventListener('click', async (e) => {
     }
     btn.disabled = false;
     btn.textContent = 'Push All';
+    return;
+  }
+
+  // Create Pull Request
+  if (e.target.id === 'btn-git-create-pr' || e.target.closest('#btn-git-create-pr')) {
+    const title = document.getElementById('git-pr-title')?.value?.trim();
+    const body = document.getElementById('git-pr-body')?.value?.trim();
+    const isDraft = document.getElementById('git-pr-draft')?.checked;
+    const base = document.getElementById('git-pr-base')?.value;
+
+    let cmd = 'gh pr create';
+    if (title) cmd += ` --title "${title.replace(/"/g, '\\"')}"`;
+    if (body) cmd += ` --body "${body.replace(/"/g, '\\"')}"`;
+    if (isDraft) cmd += ' --draft';
+    if (base) cmd += ` --base ${base}`;
+    if (!title) cmd += ' --fill';
+
+    // Show terminal and run the command
+    window.sendToTerminal(cmd, { returnToGitView: true });
+    return;
+  }
+
+  // gh CLI install info
+  if (e.target.id === 'btn-gh-install-info' || e.target.closest('#btn-gh-install-info')) {
+    e.preventDefault();
+    window.api.openExternal('https://cli.github.com/');
     return;
   }
 

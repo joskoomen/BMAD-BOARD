@@ -2389,3 +2389,46 @@ html, body {
 .git-tag-delete {
   color: var(--danger) !important;
 }
+
+/* ── Pull Request Panel ──────────────────────────────────────────────── */
+
+.git-pr-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.git-pr-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.git-pr-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.git-pr-option input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.git-pr-base-select {
+  width: auto;
+  min-width: 120px;
+  font-size: 12px;
+}
+
+.git-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.git-link:hover {
+  text-decoration: underline;
+}

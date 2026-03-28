@@ -82,6 +82,8 @@ contextBridge.exposeInMainWorld('api', {
   gitDiff: () => ipcRenderer.invoke('git:diff'),
   gitDiffFile: (file, staged) => ipcRenderer.invoke('git:diff-file', file, staged),
   gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
+  gitHasGhCli: () => ipcRenderer.invoke('git:has-gh-cli'),
+  gitRemoteUrl: () => ipcRenderer.invoke('git:remote-url'),
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),

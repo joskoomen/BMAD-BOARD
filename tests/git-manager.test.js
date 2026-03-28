@@ -636,3 +636,54 @@ describe('GitManager.tags', () => {
     fs.rmSync(remoteDir, { recursive: true, force: true });
   });
 });
+
+// ── hasGhCli ─────────────────────────────────────────────────────────
+
+describe('GitManager.hasGhCli', () => {
+  it('returns a boolean', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    const result = await gm.hasGhCli();
+    expect(typeof result).toBe('boolean');
+  });
+});
+
+// ── getRemoteUrl ─────────────────────────────────────────────────────
+
+describe('GitManager.getRemoteUrl', () => {
+  it('returns null for repo with no remotes', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    const url = await gm.getRemoteUrl();
+    expect(url).toBeNull();
+  });
+
+  it('returns remote URL for cloned repo', async () => {
+    const remoteDir = createTmpDir();
+    execSync('git init --bare', { cwd: remoteDir, stdio: 'ignore' });
+
+    execSync(`git clone "${remoteDir}" cloned`, { cwd: tmpDir, stdio: 'ignore' });
+    const clonedDir = path.join(tmpDir, 'cloned');
+    execSync('git config user.email "test@test.com"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config commit.gpgsign false', { cwd: clonedDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(clonedDir, 'file.txt'), 'hello');
+    execSync('git add . && git commit -m "init"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git push', { cwd: clonedDir, stdio: 'ignore' });
+
+    const gm = new GitManager(clonedDir);
+    const url = await gm.getRemoteUrl();
+    expect(url).toContain(remoteDir);
+
+    fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+});
