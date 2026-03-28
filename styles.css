@@ -2691,3 +2691,72 @@ html, body {
 .git-context-menu-danger:hover {
   background: rgba(239, 68, 68, 0.15) !important;
 }
+
+/* ── Rebase Banner ───────────────────────────────────────────────────── */
+
+.git-rebase-banner {
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid var(--purple);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* ── Discard ─────────────────────────────────────────────────────────── */
+
+.git-discard-file {
+  opacity: 0;
+  transition: opacity var(--transition);
+  color: var(--danger) !important;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.git-file-item:hover .git-discard-file {
+  opacity: 1;
+}
+
+.git-discard-all-btn {
+  color: var(--danger) !important;
+}
+
+/* ── Amend ────────────────────────────────────────────────────────────── */
+
+.git-amend-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.git-amend-label input[type="checkbox"] {
+  accent-color: var(--warning);
+}
+
+/* ── Commit Detail Actions ───────────────────────────────────────────── */
+
+.git-commit-detail-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* ── File History Button ─────────────────────────────────────────────── */
+
+.git-file-history-btn {
+  opacity: 0;
+  transition: opacity var(--transition);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.git-commit-file-item:hover .git-file-history-btn {
+  opacity: 1;
+}

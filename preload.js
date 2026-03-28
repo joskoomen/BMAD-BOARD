@@ -94,6 +94,15 @@ contextBridge.exposeInMainWorld('api', {
   gitShowCommit: (hash) => ipcRenderer.invoke('git:show-commit', hash),
   gitCommitDiff: (hash) => ipcRenderer.invoke('git:commit-diff', hash),
   gitCommitFileDiff: (hash, file) => ipcRenderer.invoke('git:commit-file-diff', hash, file),
+  gitDiscardFile: (file) => ipcRenderer.invoke('git:discard-file', file),
+  gitDiscardAll: () => ipcRenderer.invoke('git:discard-all'),
+  gitAmend: (message) => ipcRenderer.invoke('git:amend', message),
+  gitRevert: (hash) => ipcRenderer.invoke('git:revert', hash),
+  gitRebase: (branch) => ipcRenderer.invoke('git:rebase', branch),
+  gitRebaseAbort: () => ipcRenderer.invoke('git:rebase-abort'),
+  gitRebaseContinue: () => ipcRenderer.invoke('git:rebase-continue'),
+  gitIsRebasing: () => ipcRenderer.invoke('git:is-rebasing'),
+  gitFileLog: (file, limit) => ipcRenderer.invoke('git:file-log', file, limit),
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),

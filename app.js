@@ -317,13 +317,14 @@ async function renderGitView() {
   container.innerHTML = '<p class="git-loading">Loading git data...</p>';
 
   try {
-    const [branches, status, log, tags, hasGh, stashList] = await Promise.all([
+    const [branches, status, log, tags, hasGh, stashList, isRebasing] = await Promise.all([
       window.api.gitBranches(),
       window.api.gitStatus(),
       window.api.gitLog(25),
       window.api.gitTags(),
       window.api.gitHasGhCli(),
-      window.api.gitStashList()
+      window.api.gitStashList(),
+      window.api.gitIsRebasing()
     ]);
 
     if (branches.error || status.error) {
@@ -436,6 +437,7 @@ async function renderGitView() {
         <input type="checkbox" class="git-file-check" data-stage-file="${f.path}">
         <span class="git-file-status git-file-status-${(f.working_dir || '?').toLowerCase()}">${f.working_dir || '?'}</span>
         <span class="git-file-name" data-diff-file="${f.path}" data-diff-staged="false" title="Click to view diff">${f.path}</span>
+        <button class="btn btn-ghost btn-xs git-discard-file" data-discard-file="${f.path}" title="Discard changes">&#8630;</button>
       </div>
     `).join('');
 
@@ -497,6 +499,17 @@ async function renderGitView() {
       </div>
       ` : ''}
 
+      ${isRebasing ? `
+      <div class="git-rebase-banner">
+        <span class="git-merge-banner-text">Rebase in progress${status.conflicted.length > 0 ? ` — ${status.conflicted.length} conflict(s)` : ''}</span>
+        <div class="git-merge-banner-actions">
+          ${status.conflicted.length > 0 ? '<button class="btn btn-primary btn-sm" id="btn-git-resolve-llm">Resolve with LLM</button>' : ''}
+          <button class="btn btn-primary btn-sm" id="btn-git-rebase-continue">Continue Rebase</button>
+          <button class="btn btn-ghost btn-sm" id="btn-git-rebase-abort">Abort Rebase</button>
+        </div>
+      </div>
+      ` : ''}
+
       <div class="git-panels">
         ${status.files.length > 0 || staged.length > 0 ? `
         <div class="git-panel">
@@ -514,6 +527,7 @@ async function renderGitView() {
             <h3>Changes</h3>
             <div class="git-panel-header-actions">
               <span class="git-panel-count">${unstaged.length}</span>
+              ${unstaged.length > 0 ? '<button class="btn btn-ghost btn-xs git-discard-all-btn" id="btn-git-discard-all" title="Discard all changes">Discard All</button>' : ''}
               ${unstaged.length > 0 ? '<button class="btn btn-ghost btn-xs" id="btn-git-stage-all" title="Stage all changes">Stage All</button>' : ''}
             </div>
           </div>
@@ -539,6 +553,9 @@ async function renderGitView() {
           </div>
           <textarea id="git-commit-message" class="git-commit-textarea" placeholder="Commit message..." rows="3">${preservedMsg}</textarea>
           <div class="git-commit-actions">
+            <label class="git-amend-label">
+              <input type="checkbox" id="git-amend-toggle"> Amend
+            </label>
             <button class="btn btn-ghost btn-sm" id="btn-git-generate-msg" title="Generate commit message with LLM">Generate Message</button>
             <button class="btn btn-primary btn-sm" id="btn-git-commit" ${staged.length === 0 ? 'disabled' : ''} title="${staged.length === 0 ? 'Stage files first' : 'Commit staged changes'}">Commit</button>
           </div>
@@ -752,6 +769,7 @@ function showGitContextMenu(x, y, branch, currentBranch) {
   if (!isCurrentBranch) {
     items.push({ label: `Checkout ${branch}`, action: 'checkout' });
     items.push({ label: `Merge ${branch} into ${currentBranch}`, action: 'merge' });
+    items.push({ label: `Rebase ${currentBranch} onto ${branch}`, action: 'rebase' });
     if (isRemote) {
       items.push({ label: `Delete remote branch`, action: 'delete-remote', cls: 'danger' });
     } else {
@@ -812,6 +830,19 @@ function showGitContextMenu(x, y, branch, currentBranch) {
         } else {
           showToast(`Delete failed: ${err.message}`, 'error');
         }
+      }
+    } else if (item.dataset.action === 'rebase') {
+      if (!confirm(`Rebase "${currentBranch}" onto "${branch}"?`)) return;
+      try {
+        const result = await window.api.gitRebase(branch);
+        if (result.success) {
+          showToast(`Rebased onto ${branch}`, 'success');
+        } else {
+          showToast(`Rebase conflicts: ${result.conflicts.length} file(s)`, 'warning');
+        }
+        renderGitView();
+      } catch (err) {
+        showToast(`Rebase failed: ${err.message}`, 'error');
       }
     } else if (item.dataset.action === 'delete-remote') {
       if (!confirm(`Delete remote branch "${branch}"? This cannot be undone.`)) return;
@@ -985,20 +1016,27 @@ document.addEventListener('click', async (e) => {
 
   // Commit
   if (e.target.id === 'btn-git-commit' || e.target.closest('#btn-git-commit')) {
+    const isAmend = document.getElementById('git-amend-toggle')?.checked;
     const message = buildCommitMessage();
-    if (!message) {
+    if (!message && !isAmend) {
       showToast('Please enter a commit message', 'warning');
       return;
     }
     const btn = document.getElementById('btn-git-commit');
     btn.disabled = true;
-    btn.textContent = 'Committing...';
+    btn.textContent = isAmend ? 'Amending...' : 'Committing...';
     try {
-      const result = await window.api.gitCommit(message);
-      showToast(`Committed ${result.hash?.substring(0, 7) || ''}`, 'success');
+      let result;
+      if (isAmend) {
+        result = await window.api.gitAmend(message || undefined);
+        showToast(`Amended ${result.hash?.substring(0, 7) || ''}`, 'success');
+      } else {
+        result = await window.api.gitCommit(message);
+        showToast(`Committed ${result.hash?.substring(0, 7) || ''}`, 'success');
+      }
       renderGitView();
     } catch (err) {
-      showToast(`Commit failed: ${err.message}`, 'error');
+      showToast(`${isAmend ? 'Amend' : 'Commit'} failed: ${err.message}`, 'error');
       btn.disabled = false;
       btn.textContent = 'Commit';
     }
@@ -1314,6 +1352,7 @@ document.addEventListener('click', async (e) => {
         return `<div class="git-commit-file-item" data-commit-file-diff="${hash}" data-commit-file="${f.path}">
           <span class="git-file-status git-file-status-${statusCls}">${f.status}</span>
           <span class="git-file-name">${f.path}</span>
+          <button class="btn btn-ghost btn-xs git-file-history-btn" data-file-history="${f.path}" title="File history">&circlearrowleft;</button>
         </div>`;
       }).join('');
 
@@ -1323,6 +1362,9 @@ document.addEventListener('click', async (e) => {
           <strong>${info.subject}</strong>
           <div class="git-commit-detail-meta">${info.hashShort} &middot; ${info.author} &middot; ${info.date}</div>
           ${info.body ? `<pre class="git-commit-detail-body">${info.body}</pre>` : ''}
+          <div class="git-commit-detail-actions">
+            <button class="btn btn-ghost btn-xs" data-revert-commit="${hash}" title="Create a new commit that undoes this one">Revert</button>
+          </div>
         </div>
         <div class="git-commit-detail-files">${filesHtml}</div>
         <div id="git-commit-file-diff-viewer" class="git-diff-viewer hidden"></div>
@@ -1371,6 +1413,102 @@ document.addEventListener('click', async (e) => {
   if (e.target.classList.contains('btn-close-commit-file-diff') || e.target.closest('.btn-close-commit-file-diff')) {
     const viewer = document.getElementById('git-commit-file-diff-viewer');
     if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
+    return;
+  }
+
+  // ── Discard ──
+  const discardBtn = e.target.closest('[data-discard-file]');
+  if (discardBtn) {
+    const file = discardBtn.dataset.discardFile;
+    if (!confirm(`Discard changes in "${file}"?`)) return;
+    try {
+      await window.api.gitDiscardFile(file);
+      showToast(`Discarded changes in ${file}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Discard failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  if (e.target.id === 'btn-git-discard-all' || e.target.closest('#btn-git-discard-all')) {
+    if (!confirm('Discard ALL local changes? This cannot be undone.')) return;
+    try {
+      await window.api.gitDiscardAll();
+      showToast('All changes discarded', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Discard all failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Revert Commit ──
+  const revertBtn = e.target.closest('[data-revert-commit]');
+  if (revertBtn) {
+    const hash = revertBtn.dataset.revertCommit;
+    if (!confirm(`Revert commit ${hash.substring(0, 7)}? This will create a new commit.`)) return;
+    try {
+      await window.api.gitRevert(hash);
+      showToast('Commit reverted', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Revert failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Rebase Controls ──
+  if (e.target.id === 'btn-git-rebase-continue' || e.target.closest('#btn-git-rebase-continue')) {
+    try {
+      await window.api.gitRebaseContinue();
+      showToast('Rebase continued', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Rebase continue failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  if (e.target.id === 'btn-git-rebase-abort' || e.target.closest('#btn-git-rebase-abort')) {
+    try {
+      await window.api.gitRebaseAbort();
+      showToast('Rebase aborted', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Rebase abort failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── File History ──
+  const fileHistoryBtn = e.target.closest('[data-file-history]');
+  if (fileHistoryBtn) {
+    e.stopPropagation();
+    const file = fileHistoryBtn.dataset.fileHistory;
+    const viewer = document.getElementById('git-commit-file-diff-viewer') || document.getElementById('git-diff-viewer');
+    if (!viewer) return;
+
+    viewer.innerHTML = '<p class="git-loading">Loading file history...</p>';
+    viewer.classList.remove('hidden');
+
+    try {
+      const history = await window.api.gitFileLog(file, 20);
+      if (history.length === 0) {
+        viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">No history found</p>`;
+      } else {
+        const historyHtml = history.map(c => `
+          <div class="git-commit-item git-commit-clickable" data-show-commit="${c.hash}">
+            <span class="git-commit-hash">${c.hashShort}</span>
+            <span class="git-commit-message">${c.message}</span>
+            <span class="git-commit-meta">${c.author} &middot; ${formatTimeAgo(c.date)}</span>
+          </div>
+        `).join('');
+        viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file} (${history.length} commits)</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><div class="git-commit-list">${historyHtml}</div>`;
+      }
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">Could not load history</p>`;
+    }
     return;
   }
 });

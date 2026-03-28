@@ -1023,6 +1023,74 @@ ipcMain.handle('git:commit-file-diff', async (event, hash, file) => {
   return gm.commitFileDiff(hash, file);
 });
 
+// Discard
+ipcMain.handle('git:discard-file', async (event, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.discardFile(file);
+});
+
+ipcMain.handle('git:discard-all', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.discardAll();
+});
+
+// Amend
+ipcMain.handle('git:amend', async (event, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.amend(message);
+});
+
+// Revert
+ipcMain.handle('git:revert', async (event, hash) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.revert(hash);
+});
+
+// Rebase
+ipcMain.handle('git:rebase', async (event, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.rebase(branch);
+});
+
+ipcMain.handle('git:rebase-abort', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.rebaseAbort();
+});
+
+ipcMain.handle('git:rebase-continue', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.rebaseContinue();
+});
+
+ipcMain.handle('git:is-rebasing', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return false;
+  const gm = new GitManager(projectPath);
+  return gm.isRebasing();
+});
+
+// File history
+ipcMain.handle('git:file-log', async (event, file, limit) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return [];
+  const gm = new GitManager(projectPath);
+  return gm.fileLog(file, limit);
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;

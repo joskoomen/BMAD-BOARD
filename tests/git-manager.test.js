@@ -929,3 +929,183 @@ describe('GitManager.commitFileDiff', () => {
     expect(diff).toContain('+world');
   });
 });
+
+// ── discardFile ──────────────────────────────────────────────────────
+
+describe('GitManager.discardFile', () => {
+  it('discards changes in a specific file', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'original');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'modified');
+
+    const gm = new GitManager(tmpDir);
+    await gm.discardFile('file.txt');
+
+    const content = fs.readFileSync(path.join(tmpDir, 'file.txt'), 'utf8');
+    expect(content).toBe('original');
+
+    const status = await gm.status();
+    expect(status.isClean).toBe(true);
+  });
+});
+
+// ── discardAll ───────────────────────────────────────────────────────
+
+describe('GitManager.discardAll', () => {
+  it('discards all changes including untracked', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'original');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'modified');
+    writeFile('untracked.txt', 'new');
+
+    const gm = new GitManager(tmpDir);
+    await gm.discardAll();
+
+    const status = await gm.status();
+    expect(status.isClean).toBe(true);
+    expect(status.files.length).toBe(0);
+    expect(fs.existsSync(path.join(tmpDir, 'untracked.txt'))).toBe(false);
+  });
+});
+
+// ── amend ────────────────────────────────────────────────────────────
+
+describe('GitManager.amend', () => {
+  it('amends last commit with new message', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'original message');
+
+    const gm = new GitManager(tmpDir);
+    const result = await gm.amend('updated message');
+
+    expect(result.hash).toBeTruthy();
+    const log = await gm.log(1);
+    expect(log[0].message).toBe('updated message');
+  });
+
+  it('amends with staged changes and no message change', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'amended content');
+    const gm = new GitManager(tmpDir);
+    await gm.stage(['file.txt']);
+    await gm.amend();
+
+    const log = await gm.log(1);
+    expect(log[0].message).toBe('init'); // message unchanged
+  });
+});
+
+// ── revert ───────────────────────────────────────────────────────────
+
+describe('GitManager.revert', () => {
+  it('reverts a commit', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('file.txt', 'changed');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'change');
+
+    const gm = new GitManager(tmpDir);
+    const log = await gm.log(1);
+    await gm.revert(log[0].hash);
+
+    const content = fs.readFileSync(path.join(tmpDir, 'file.txt'), 'utf8');
+    expect(content).toBe('hello');
+
+    const newLog = await gm.log(3);
+    expect(newLog[0].message).toContain('Revert');
+  });
+});
+
+// ── rebase ───────────────────────────────────────────────────────────
+
+describe('GitManager.rebase', () => {
+  it('rebases current branch onto target', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    // Create feature branch with a commit
+    execSync('git checkout -b feature', { cwd: tmpDir, stdio: 'ignore' });
+    writeFile('feature.txt', 'feature work');
+    gitAdd(tmpDir, 'feature.txt');
+    gitCommit(tmpDir, 'feature commit');
+
+    // Go back to master and add a commit
+    execSync('git checkout master || git checkout main', { cwd: tmpDir, stdio: 'ignore', shell: true });
+    writeFile('master.txt', 'master work');
+    gitAdd(tmpDir, 'master.txt');
+    gitCommit(tmpDir, 'master commit');
+
+    // Checkout feature and rebase onto master
+    execSync('git checkout feature', { cwd: tmpDir, stdio: 'ignore' });
+
+    const gm = new GitManager(tmpDir);
+    const result = await gm.rebase('master');
+
+    expect(result.success).toBe(true);
+
+    // Feature should now have master's commit
+    expect(fs.existsSync(path.join(tmpDir, 'master.txt'))).toBe(true);
+  });
+
+  it('detects rebase in progress', async () => {
+    gitInit(tmpDir);
+    const gm = new GitManager(tmpDir);
+    const rebasing = await gm.isRebasing();
+    expect(rebasing).toBe(false);
+  });
+});
+
+// ── fileLog ──────────────────────────────────────────────────────────
+
+describe('GitManager.fileLog', () => {
+  it('returns commit history for a specific file', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'v1');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'first');
+
+    writeFile('file.txt', 'v2');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'second');
+
+    writeFile('other.txt', 'other');
+    gitAdd(tmpDir, 'other.txt');
+    gitCommit(tmpDir, 'other file');
+
+    const gm = new GitManager(tmpDir);
+    const history = await gm.fileLog('file.txt');
+
+    expect(history.length).toBe(2);
+    expect(history[0].message).toBe('second');
+    expect(history[1].message).toBe('first');
+  });
+
+  it('returns empty for non-existent file', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'v1');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'first');
+
+    const gm = new GitManager(tmpDir);
+    const history = await gm.fileLog('nonexistent.txt');
+    expect(history).toEqual([]);
+  });
+});
