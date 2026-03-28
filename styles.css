@@ -2145,16 +2145,12 @@ html, body {
   color: var(--text-primary);
 }
 
-.git-file-action {
-  color: var(--text-muted);
-  font-size: 11px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.git-file-item:hover .git-file-action {
-  opacity: 1;
-  color: var(--accent);
+.git-file-check {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
 }
 
 .git-empty-sm {

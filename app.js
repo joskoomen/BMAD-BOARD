@@ -368,17 +368,17 @@ async function renderGitView() {
 
     const stagedHtml = staged.map(f => `
       <div class="git-file-item git-file-staged" data-unstage-file="${f.path}" title="Click to unstage">
+        <input type="checkbox" class="git-file-check" checked data-unstage-file="${f.path}">
         <span class="git-file-status git-file-status-${f.index.toLowerCase()}">${f.index}</span>
         <span class="git-file-name">${f.path}</span>
-        <span class="git-file-action">unstage</span>
       </div>
     `).join('');
 
     const unstagedHtml = unstaged.map(f => `
       <div class="git-file-item git-file-unstaged" data-stage-file="${f.path}" title="Click to stage">
+        <input type="checkbox" class="git-file-check" data-stage-file="${f.path}">
         <span class="git-file-status git-file-status-${(f.working_dir || '?').toLowerCase()}">${f.working_dir || '?'}</span>
         <span class="git-file-name">${f.path}</span>
-        <span class="git-file-action">stage</span>
       </div>
     `).join('');
 
@@ -580,28 +580,32 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  // Stage file
-  const stageItem = e.target.closest('[data-stage-file]');
-  if (stageItem) {
-    const file = stageItem.dataset.stageFile;
-    try {
-      await window.api.gitStage([file]);
-      renderGitView();
-    } catch (err) {
-      showToast(`Stage failed: ${err.message}`, 'error');
+  // Stage file (checkbox unchecked→checked, or row click)
+  const stageCheck = e.target.closest('.git-file-unstaged');
+  if (stageCheck) {
+    const file = stageCheck.dataset.stageFile;
+    if (file) {
+      try {
+        await window.api.gitStage([file]);
+        renderGitView();
+      } catch (err) {
+        showToast(`Stage failed: ${err.message}`, 'error');
+      }
     }
     return;
   }
 
-  // Unstage file
-  const unstageItem = e.target.closest('[data-unstage-file]');
-  if (unstageItem) {
-    const file = unstageItem.dataset.unstageFile;
-    try {
-      await window.api.gitUnstage([file]);
-      renderGitView();
-    } catch (err) {
-      showToast(`Unstage failed: ${err.message}`, 'error');
+  // Unstage file (checkbox checked→unchecked, or row click)
+  const unstageCheck = e.target.closest('.git-file-staged');
+  if (unstageCheck) {
+    const file = unstageCheck.dataset.unstageFile;
+    if (file) {
+      try {
+        await window.api.gitUnstage([file]);
+        renderGitView();
+      } catch (err) {
+        showToast(`Unstage failed: ${err.message}`, 'error');
+      }
     }
     return;
   }
