@@ -322,20 +322,28 @@ async function renderGitView() {
       ? `<span class="git-changes-badge" title="${changedCount} changed file(s)">${changedCount} changed</span>`
       : '<span class="git-clean-badge">clean</span>';
 
+    const hasPushTarget = !!status.tracking;
+
     const localBranchesHtml = branches.local.map(b => `
-      <div class="git-branch-item ${b.current ? 'git-branch-current' : ''}">
+      <div class="git-branch-item ${b.current ? 'git-branch-current' : 'git-branch-clickable'}" ${b.current ? '' : `data-branch="${b.name}"`} title="${b.current ? 'Current branch' : `Checkout ${b.name}`}">
         <span class="git-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
         <span class="git-branch-name">${b.name}</span>
-        ${b.current ? '<span class="git-branch-tag">HEAD</span>' : ''}
+        ${b.current ? '<span class="git-branch-tag">HEAD</span>' : '<span class="git-branch-action">checkout</span>'}
       </div>
     `).join('');
 
-    const remoteBranchesHtml = branches.remote.map(b => `
-      <div class="git-branch-item git-branch-remote">
-        <span class="git-branch-icon">&#9675;</span>
-        <span class="git-branch-name">${b.name}</span>
-      </div>
-    `).join('');
+    const remoteBranchesHtml = branches.remote.map(b => {
+      // Check if a local branch already tracks this remote
+      const localName = b.name.replace(/^[^/]+\//, '');
+      const hasLocal = branches.local.some(lb => lb.name === localName);
+      return `
+        <div class="git-branch-item git-branch-remote ${hasLocal ? '' : 'git-branch-clickable'}" ${hasLocal ? '' : `data-remote-branch="${b.name}"`} title="${hasLocal ? 'Tracked locally' : `Checkout ${localName}`}">
+          <span class="git-branch-icon">&#9675;</span>
+          <span class="git-branch-name">${b.name}</span>
+          ${hasLocal ? '' : '<span class="git-branch-action">checkout</span>'}
+        </div>
+      `;
+    }).join('');
 
     const commitsHtml = log.map(c => `
       <div class="git-commit-item">
@@ -346,6 +354,16 @@ async function renderGitView() {
     `).join('');
 
     container.innerHTML = `
+      <div class="git-toolbar">
+        <button class="btn btn-ghost btn-sm" id="btn-git-fetch" title="Fetch all remotes">Fetch</button>
+        <button class="btn btn-ghost btn-sm" id="btn-git-pull" ${hasPushTarget ? '' : 'disabled'} title="${hasPushTarget ? `Pull from ${status.tracking}` : 'No tracking branch'}">
+          Pull${status.behind > 0 ? ` <span class="git-btn-badge">&darr;${status.behind}</span>` : ''}
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-git-push" ${hasPushTarget ? '' : 'disabled'} title="${hasPushTarget ? `Push to ${status.tracking}` : 'No tracking branch'}">
+          Push${status.ahead > 0 ? ` <span class="git-btn-badge">&uarr;${status.ahead}</span>` : ''}
+        </button>
+      </div>
+
       <div class="git-status-bar">
         <div class="git-status-branch">
           <span class="git-status-label">Branch:</span>
@@ -395,10 +413,98 @@ async function renderGitView() {
   }
 }
 
-// Wire refresh button
-document.addEventListener('click', (e) => {
+// ── Git View Event Handlers ─────────────────────────────────────────────
+
+document.addEventListener('click', async (e) => {
+  // Refresh
   if (e.target.id === 'btn-git-refresh' || e.target.closest('#btn-git-refresh')) {
     renderGitView();
+    return;
+  }
+
+  // Fetch
+  if (e.target.id === 'btn-git-fetch' || e.target.closest('#btn-git-fetch')) {
+    const btn = document.getElementById('btn-git-fetch');
+    btn.disabled = true;
+    btn.textContent = 'Fetching...';
+    try {
+      await window.api.gitFetch();
+      showToast('Fetch complete', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Fetch failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Fetch';
+    }
+    return;
+  }
+
+  // Pull
+  if (e.target.id === 'btn-git-pull' || e.target.closest('#btn-git-pull')) {
+    const btn = document.getElementById('btn-git-pull');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Pulling...';
+    try {
+      const result = await window.api.gitPull();
+      const count = result.summary?.changes ?? 0;
+      showToast(`Pull complete (${count} change${count !== 1 ? 's' : ''})`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Pull failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Pull';
+    }
+    return;
+  }
+
+  // Push
+  if (e.target.id === 'btn-git-push' || e.target.closest('#btn-git-push')) {
+    const btn = document.getElementById('btn-git-push');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Pushing...';
+    try {
+      await window.api.gitPush();
+      showToast('Push complete', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Push failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Push';
+    }
+    return;
+  }
+
+  // Checkout local branch
+  const localItem = e.target.closest('[data-branch]');
+  if (localItem) {
+    const branch = localItem.dataset.branch;
+    if (!confirm(`Checkout branch "${branch}"?`)) return;
+    try {
+      await window.api.gitCheckout(branch);
+      showToast(`Switched to ${branch}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Checkout failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Checkout remote branch (creates local tracking branch)
+  const remoteItem = e.target.closest('[data-remote-branch]');
+  if (remoteItem) {
+    const remoteBranch = remoteItem.dataset.remoteBranch;
+    const localName = remoteBranch.replace(/^[^/]+\//, '');
+    if (!confirm(`Checkout remote branch "${remoteBranch}" as local "${localName}"?`)) return;
+    try {
+      await window.api.gitCheckout(localName);
+      showToast(`Switched to ${localName}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Checkout failed: ${err.message}`, 'error');
+    }
+    return;
   }
 });
 

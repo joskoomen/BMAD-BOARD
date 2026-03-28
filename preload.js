@@ -64,6 +64,10 @@ contextBridge.exposeInMainWorld('api', {
   gitStatus: () => ipcRenderer.invoke('git:status'),
   gitBranches: () => ipcRenderer.invoke('git:branches'),
   gitLog: (limit) => ipcRenderer.invoke('git:log', limit),
+  gitCheckout: (branch) => ipcRenderer.invoke('git:checkout', branch),
+  gitFetch: () => ipcRenderer.invoke('git:fetch'),
+  gitPull: (remote, branch) => ipcRenderer.invoke('git:pull', remote, branch),
+  gitPush: (remote, branch) => ipcRenderer.invoke('git:push', remote, branch),
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),

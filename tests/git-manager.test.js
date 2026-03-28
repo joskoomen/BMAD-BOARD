@@ -208,3 +208,107 @@ describe('GitManager.log', () => {
     expect(log[2].message).toBe('commit 1');
   });
 });
+
+// ── checkout ──────────────────────────────────────────────────────────
+
+describe('GitManager.checkout', () => {
+  it('switches to an existing branch', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+    execSync('git branch feature', { cwd: tmpDir, stdio: 'ignore' });
+
+    const gm = new GitManager(tmpDir);
+    const status = await gm.checkout('feature');
+
+    expect(status.current).toBe('feature');
+  });
+
+  it('throws when checking out non-existent branch', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    const gm = new GitManager(tmpDir);
+    await expect(gm.checkout('nonexistent')).rejects.toThrow();
+  });
+});
+
+// ── fetch ─────────────────────────────────────────────────────────────
+
+describe('GitManager.fetch', () => {
+  it('runs without error on a repo with no remotes', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'initial commit');
+
+    const gm = new GitManager(tmpDir);
+    // fetch with no remotes should not throw
+    await expect(gm.fetch()).resolves.not.toThrow();
+  });
+});
+
+// ── pull ──────────────────────────────────────────────────────────────
+
+describe('GitManager.pull', () => {
+  it('pulls from a local remote', async () => {
+    // Create a "remote" repo
+    const remoteDir = createTmpDir();
+    gitInit(remoteDir);
+    fs.writeFileSync(path.join(remoteDir, 'file.txt'), 'hello');
+    execSync('git add . && git commit -m "init"', { cwd: remoteDir, stdio: 'ignore' });
+
+    // Clone it
+    execSync(`git clone "${remoteDir}" cloned`, { cwd: tmpDir, stdio: 'ignore' });
+    const clonedDir = path.join(tmpDir, 'cloned');
+    execSync('git config user.email "test@test.com"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: clonedDir, stdio: 'ignore' });
+
+    // Add a commit to the remote
+    fs.writeFileSync(path.join(remoteDir, 'file.txt'), 'updated');
+    execSync('git add . && git commit -m "update"', { cwd: remoteDir, stdio: 'ignore' });
+
+    // Pull in the clone
+    const gm = new GitManager(clonedDir);
+    const result = await gm.pull();
+
+    expect(result.files).toContain('file.txt');
+
+    // Cleanup remote
+    fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+});
+
+// ── push ──────────────────────────────────────────────────────────────
+
+describe('GitManager.push', () => {
+  it('pushes to a local remote', async () => {
+    // Create a bare "remote" repo
+    const remoteDir = createTmpDir();
+    execSync('git init --bare', { cwd: remoteDir, stdio: 'ignore' });
+
+    // Clone it
+    execSync(`git clone "${remoteDir}" cloned`, { cwd: tmpDir, stdio: 'ignore' });
+    const clonedDir = path.join(tmpDir, 'cloned');
+    execSync('git config user.email "test@test.com"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: clonedDir, stdio: 'ignore' });
+    execSync('git config commit.gpgsign false', { cwd: clonedDir, stdio: 'ignore' });
+
+    // Make a commit and push
+    fs.writeFileSync(path.join(clonedDir, 'file.txt'), 'hello');
+    execSync('git add . && git commit -m "init"', { cwd: clonedDir, stdio: 'ignore' });
+
+    const gm = new GitManager(clonedDir);
+    await expect(gm.push()).resolves.not.toThrow();
+
+    // Verify remote got the commit
+    const remoteLog = execSync('git log --oneline', { cwd: remoteDir }).toString();
+    expect(remoteLog).toContain('init');
+
+    // Cleanup remote
+    fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+});
