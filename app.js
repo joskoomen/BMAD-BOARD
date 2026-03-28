@@ -695,7 +695,7 @@ document.addEventListener('click', async (e) => {
       const conflictFiles = status.conflicted || [];
       const fileList = conflictFiles.join(', ');
       const prompt = `There are merge conflicts in the following files: ${fileList}. Please help me resolve these merge conflicts. Look at each file, understand both sides of the conflict, and resolve them appropriately.`;
-      window.sendToTerminal(prompt);
+      window.sendToTerminal(prompt, { returnToGitView: true });
       showView('terminal');
     } catch (err) {
       showToast(`Failed to start LLM: ${err.message}`, 'error');

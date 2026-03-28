@@ -315,7 +315,9 @@ async function createTab(slashCommand, opts) {
     storyPhase,
     // Activity monitoring
     lastDataAt: null,
-    activityState: 'idle' // 'working' | 'idle' | 'exited'
+    activityState: 'idle', // 'working' | 'idle' | 'exited'
+    // Auto-return to git view when this tab's process exits
+    returnToGitView: opts?.returnToGitView || false
   };
 
   tabs.set(tabId, tab);
@@ -430,6 +432,17 @@ async function createPtyForTab(tab) {
       tab.alive = false;
       updateStatusDot();
       renderTabs();
+
+      // If this tab was opened for merge conflict resolution, return to git view
+      if (tab.returnToGitView) {
+        setTimeout(() => {
+          closeTab(tab.id);
+          if (typeof window.showView === 'function') {
+            window.showView('git');
+          }
+        }, 1500);
+      }
+
       // Show next-step actions if this is the active tab
       if (tab.id === activeTabId) {
         showNextStepBar(tab);
