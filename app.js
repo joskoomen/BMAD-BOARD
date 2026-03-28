@@ -344,16 +344,49 @@ async function renderGitView() {
       `;
     }
 
+    // ── Classify files into staged / unstaged ──
+    const staged = [];
+    const unstaged = [];
+    for (const f of status.files) {
+      // index: staged status, working_dir: unstaged status
+      if (f.index && f.index !== ' ' && f.index !== '?') {
+        staged.push(f);
+      }
+      if (f.working_dir && f.working_dir !== ' ') {
+        unstaged.push(f);
+      }
+      // Untracked files (? in both)
+      if (f.index === '?' && f.working_dir === '?') {
+        if (!unstaged.includes(f)) unstaged.push(f);
+      }
+    }
+
+    const fileStatusLabel = (code) => {
+      const labels = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', '?': 'untracked' };
+      return labels[code] || code;
+    };
+
+    const stagedHtml = staged.map(f => `
+      <div class="git-file-item git-file-staged" data-unstage-file="${f.path}" title="Click to unstage">
+        <span class="git-file-status git-file-status-${f.index.toLowerCase()}">${f.index}</span>
+        <span class="git-file-name">${f.path}</span>
+        <span class="git-file-action">unstage</span>
+      </div>
+    `).join('');
+
+    const unstagedHtml = unstaged.map(f => `
+      <div class="git-file-item git-file-unstaged" data-stage-file="${f.path}" title="Click to stage">
+        <span class="git-file-status git-file-status-${(f.working_dir || '?').toLowerCase()}">${f.working_dir || '?'}</span>
+        <span class="git-file-name">${f.path}</span>
+        <span class="git-file-action">stage</span>
+      </div>
+    `).join('');
+
     // ── Render main content ──
     const aheadBehind = [];
     if (status.ahead > 0) aheadBehind.push(`<span class="git-ahead" title="Commits ahead of remote">&uarr;${status.ahead}</span>`);
     if (status.behind > 0) aheadBehind.push(`<span class="git-behind" title="Commits behind remote">&darr;${status.behind}</span>`);
     const syncIndicator = aheadBehind.length ? aheadBehind.join(' ') : '<span class="git-synced">in sync</span>';
-
-    const changedCount = status.files.length;
-    const changedBadge = changedCount > 0
-      ? `<span class="git-changes-badge" title="${changedCount} changed file(s)">${changedCount} changed</span>`
-      : '<span class="git-clean-badge">clean</span>';
 
     const hasPushTarget = !!status.tracking;
 
@@ -364,6 +397,16 @@ async function renderGitView() {
         <span class="git-commit-meta">${c.author} &middot; ${formatTimeAgo(c.date)}</span>
       </div>
     `).join('');
+
+    // Preserve commit message if user was typing
+    const existingMsg = document.getElementById('git-commit-message');
+    const preservedMsg = existingMsg ? existingMsg.value : '';
+    const existingConv = document.getElementById('git-conventional-toggle');
+    const preservedConv = existingConv ? existingConv.checked : false;
+    const existingType = document.getElementById('git-conv-type');
+    const preservedType = existingType ? existingType.value : 'feat';
+    const existingScope = document.getElementById('git-conv-scope');
+    const preservedScope = existingScope ? existingScope.value : '';
 
     container.innerHTML = `
       <div class="git-toolbar">
@@ -384,11 +427,57 @@ async function renderGitView() {
         </div>
         <div class="git-status-indicators">
           ${syncIndicator}
-          ${changedBadge}
         </div>
       </div>
 
       <div class="git-panels">
+        ${status.files.length > 0 || staged.length > 0 ? `
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Staged</h3>
+            <span class="git-panel-count">${staged.length}</span>
+          </div>
+          <div class="git-file-list">
+            ${stagedHtml || '<p class="git-empty-sm">No staged files</p>'}
+          </div>
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Changes</h3>
+            <div class="git-panel-header-actions">
+              <span class="git-panel-count">${unstaged.length}</span>
+              ${unstaged.length > 0 ? '<button class="btn btn-ghost btn-xs" id="btn-git-stage-all" title="Stage all changes">Stage All</button>' : ''}
+            </div>
+          </div>
+          <div class="git-file-list">
+            ${unstagedHtml || '<p class="git-empty-sm">No unstaged changes</p>'}
+          </div>
+        </div>
+
+        <div class="git-commit-box">
+          <div class="git-commit-box-header">
+            <label class="git-conventional-label">
+              <input type="checkbox" id="git-conventional-toggle" ${preservedConv ? 'checked' : ''}>
+              Conventional Commit
+            </label>
+          </div>
+          <div class="git-conventional-fields ${preservedConv ? '' : 'hidden'}" id="git-conv-fields">
+            <select id="git-conv-type" class="git-conv-select">
+              ${['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'perf', 'ci', 'build'].map(t =>
+                `<option value="${t}" ${t === preservedType ? 'selected' : ''}>${t}</option>`
+              ).join('')}
+            </select>
+            <input type="text" id="git-conv-scope" class="git-conv-input" placeholder="scope (optional)" value="${preservedScope}">
+          </div>
+          <textarea id="git-commit-message" class="git-commit-textarea" placeholder="Commit message..." rows="3">${preservedMsg}</textarea>
+          <div class="git-commit-actions">
+            <button class="btn btn-ghost btn-sm" id="btn-git-generate-msg" title="Generate commit message with LLM">Generate Message</button>
+            <button class="btn btn-primary btn-sm" id="btn-git-commit" ${staged.length === 0 ? 'disabled' : ''} title="${staged.length === 0 ? 'Stage files first' : 'Commit staged changes'}">Commit</button>
+          </div>
+        </div>
+        ` : '<div class="git-clean-state"><span class="git-clean-badge">Working tree clean</span></div>'}
+
         <div class="git-panel">
           <div class="git-panel-header">
             <h3>Recent Commits</h3>
@@ -400,9 +489,32 @@ async function renderGitView() {
         </div>
       </div>
     `;
+
+    // Restore conventional commit field visibility
+    const convToggle = document.getElementById('git-conventional-toggle');
+    const convFields = document.getElementById('git-conv-fields');
+    if (convToggle && convFields) {
+      convToggle.addEventListener('change', () => {
+        convFields.classList.toggle('hidden', !convToggle.checked);
+      });
+    }
   } catch (err) {
     container.innerHTML = `<p class="git-empty">Failed to load git data: ${err.message}</p>`;
   }
+}
+
+/** Build the final commit message, applying conventional commit prefix if enabled. */
+function buildCommitMessage() {
+  const msg = document.getElementById('git-commit-message')?.value?.trim();
+  if (!msg) return '';
+  const convToggle = document.getElementById('git-conventional-toggle');
+  if (!convToggle || !convToggle.checked) return msg;
+  const type = document.getElementById('git-conv-type')?.value || 'feat';
+  const scope = document.getElementById('git-conv-scope')?.value?.trim();
+  const prefix = scope ? `${type}(${scope}): ` : `${type}: `;
+  // Don't double-prefix
+  if (msg.startsWith(prefix) || msg.match(/^\w+(\(.+\))?: /)) return msg;
+  return prefix + msg;
 }
 
 // ── Git View Event Handlers ─────────────────────────────────────────────
@@ -465,6 +577,96 @@ document.addEventListener('click', async (e) => {
       btn.disabled = false;
       btn.textContent = 'Push';
     }
+    return;
+  }
+
+  // Stage file
+  const stageItem = e.target.closest('[data-stage-file]');
+  if (stageItem) {
+    const file = stageItem.dataset.stageFile;
+    try {
+      await window.api.gitStage([file]);
+      renderGitView();
+    } catch (err) {
+      showToast(`Stage failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Unstage file
+  const unstageItem = e.target.closest('[data-unstage-file]');
+  if (unstageItem) {
+    const file = unstageItem.dataset.unstageFile;
+    try {
+      await window.api.gitUnstage([file]);
+      renderGitView();
+    } catch (err) {
+      showToast(`Unstage failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Stage all
+  if (e.target.id === 'btn-git-stage-all' || e.target.closest('#btn-git-stage-all')) {
+    try {
+      await window.api.gitStageAll();
+      renderGitView();
+    } catch (err) {
+      showToast(`Stage all failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Commit
+  if (e.target.id === 'btn-git-commit' || e.target.closest('#btn-git-commit')) {
+    const message = buildCommitMessage();
+    if (!message) {
+      showToast('Please enter a commit message', 'warning');
+      return;
+    }
+    const btn = document.getElementById('btn-git-commit');
+    btn.disabled = true;
+    btn.textContent = 'Committing...';
+    try {
+      const result = await window.api.gitCommit(message);
+      showToast(`Committed ${result.hash?.substring(0, 7) || ''}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Commit failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Commit';
+    }
+    return;
+  }
+
+  // Generate commit message with LLM
+  if (e.target.id === 'btn-git-generate-msg' || e.target.closest('#btn-git-generate-msg')) {
+    const btn = document.getElementById('btn-git-generate-msg');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    try {
+      const diff = await window.api.gitDiff();
+      const diffText = (diff.staged || diff.unstaged || '').substring(0, 4000);
+      if (!diffText.trim()) {
+        showToast('No diff available to generate message from', 'warning');
+        btn.disabled = false;
+        btn.textContent = 'Generate Message';
+        return;
+      }
+      // Build a simple summary from the diff stat
+      const lines = diffText.split('\n').filter(l => l.trim());
+      const summary = lines.slice(0, 20).join('\n');
+      const textarea = document.getElementById('git-commit-message');
+      if (textarea) {
+        textarea.value = summary;
+        textarea.focus();
+      }
+      showToast('Diff summary inserted — edit as needed', 'success');
+    } catch (err) {
+      showToast(`Generate failed: ${err.message}`, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Generate Message';
     return;
   }
 

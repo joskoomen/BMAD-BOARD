@@ -285,6 +285,7 @@ describe('GitManager.pull', () => {
 // ── push ──────────────────────────────────────────────────────────────
 
 describe('GitManager.push', () => {
+
   it('pushes to a local remote', async () => {
     // Create a bare "remote" repo
     const remoteDir = createTmpDir();
@@ -310,5 +311,137 @@ describe('GitManager.push', () => {
 
     // Cleanup remote
     fs.rmSync(remoteDir, { recursive: true, force: true });
+  });
+});
+
+// ── stage / unstage ───────────────────────────────────────────────────
+
+describe('GitManager.stage / unstage', () => {
+  it('stages a specific file', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed');
+    writeFile('b.txt', 'new');
+
+    const gm = new GitManager(tmpDir);
+    await gm.stage(['a.txt']);
+    const status = await gm.status();
+    const staged = status.files.filter(f => f.index === 'M');
+    expect(staged.some(f => f.path === 'a.txt')).toBe(true);
+  });
+
+  it('stages all files', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed');
+    writeFile('b.txt', 'new');
+
+    const gm = new GitManager(tmpDir);
+    await gm.stageAll();
+    const status = await gm.status();
+    const unstaged = status.files.filter(f => f.working_dir && f.working_dir !== ' ');
+    expect(unstaged.length).toBe(0);
+  });
+
+  it('unstages a file', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed');
+    const gm = new GitManager(tmpDir);
+    await gm.stage(['a.txt']);
+
+    let status = await gm.status();
+    expect(status.files.some(f => f.path === 'a.txt' && f.index === 'M')).toBe(true);
+
+    await gm.unstage(['a.txt']);
+    status = await gm.status();
+    expect(status.files.some(f => f.path === 'a.txt' && f.index === 'M')).toBe(false);
+  });
+});
+
+// ── diff ──────────────────────────────────────────────────────────────
+
+describe('GitManager.diff', () => {
+  it('returns diff summary', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed');
+    const gm = new GitManager(tmpDir);
+    const diff = await gm.diff();
+    expect(diff.unstaged).toContain('a.txt');
+  });
+
+  it('shows staged diff', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed');
+    const gm = new GitManager(tmpDir);
+    await gm.stage(['a.txt']);
+    const diff = await gm.diff();
+    expect(diff.staged).toContain('a.txt');
+  });
+});
+
+// ── diffFile ──────────────────────────────────────────────────────────
+
+describe('GitManager.diffFile', () => {
+  it('returns file diff content', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello\n');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed\n');
+    const gm = new GitManager(tmpDir);
+    const diff = await gm.diffFile('a.txt');
+    expect(diff).toContain('-hello');
+    expect(diff).toContain('+changed');
+  });
+});
+
+// ── commit ────────────────────────────────────────────────────────────
+
+describe('GitManager.commit', () => {
+  it('creates a commit with given message', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    writeFile('a.txt', 'changed');
+    const gm = new GitManager(tmpDir);
+    await gm.stage(['a.txt']);
+    const result = await gm.commit('feat: update a');
+
+    expect(result.hash).toBeTruthy();
+
+    const log = await gm.log(1);
+    expect(log[0].message).toBe('feat: update a');
+  });
+
+  it('returns empty hash with nothing staged', async () => {
+    gitInit(tmpDir);
+    writeFile('a.txt', 'hello');
+    gitAdd(tmpDir, 'a.txt');
+    gitCommit(tmpDir, 'init');
+
+    const gm = new GitManager(tmpDir);
+    const result = await gm.commit('empty');
+    expect(result.hash).toBe('');
   });
 });

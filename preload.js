@@ -68,6 +68,12 @@ contextBridge.exposeInMainWorld('api', {
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitPull: (remote, branch) => ipcRenderer.invoke('git:pull', remote, branch),
   gitPush: (remote, branch) => ipcRenderer.invoke('git:push', remote, branch),
+  gitStage: (files) => ipcRenderer.invoke('git:stage', files),
+  gitStageAll: () => ipcRenderer.invoke('git:stage-all'),
+  gitUnstage: (files) => ipcRenderer.invoke('git:unstage', files),
+  gitDiff: () => ipcRenderer.invoke('git:diff'),
+  gitDiffFile: (file, staged) => ipcRenderer.invoke('git:diff-file', file, staged),
+  gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),

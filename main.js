@@ -825,6 +825,51 @@ ipcMain.handle('git:push', async (event, remote, branch) => {
   return { ok: true };
 });
 
+ipcMain.handle('git:stage', async (event, files) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.stage(files);
+  return { ok: true };
+});
+
+ipcMain.handle('git:stage-all', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.stageAll();
+  return { ok: true };
+});
+
+ipcMain.handle('git:unstage', async (event, files) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.unstage(files);
+  return { ok: true };
+});
+
+ipcMain.handle('git:diff', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.diff();
+});
+
+ipcMain.handle('git:diff-file', async (event, file, staged) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.diffFile(file, staged);
+});
+
+ipcMain.handle('git:commit', async (event, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.commit(message);
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;
