@@ -54,8 +54,9 @@ function createWindow() {
 
   win.loadFile('index.html');
 
+  const webContentsId = win.webContents.id;
   win.on('closed', () => {
-    windowProjectPaths.delete(win.webContents.id);
+    windowProjectPaths.delete(webContentsId);
   });
 
   // Keep mainWindow pointing to latest for backward compat
@@ -190,6 +191,16 @@ async function startCompanionServer() {
     },
     updateStoryStatus: (projectPath, slug, newPhase) => {
       updateStoryStatusInYaml(projectPath, slug, newPhase);
+    },
+    launchOnDesktop: (command, storySlug, phase) => {
+      // Send to the most recently focused window's renderer
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('companion-launch-command', { command, storySlug, phase });
+        // Bring window to front
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
     }
   });
 
@@ -546,8 +557,22 @@ ipcMain.handle('session-history:save', (event, entry) => {
   entry.projectPath = entry.projectPath || projectPath;
   entry.projectName = entry.projectName || (projectPath ? path.basename(projectPath) : 'Unknown');
 
-  // Prepend (most recent first)
-  history.unshift(entry);
+  // Check for existing entry with same claudeSessionId or same command
+  const existingIdx = history.findIndex(h =>
+    (entry.claudeSessionId && h.claudeSessionId === entry.claudeSessionId) ||
+    (!entry.claudeSessionId && entry.command && h.command === entry.command)
+  );
+
+  if (existingIdx !== -1) {
+    // Update existing entry and move to top
+    const existing = history.splice(existingIdx, 1)[0];
+    existing.createdAt = entry.createdAt;
+    if (entry.claudeSessionId) existing.claudeSessionId = entry.claudeSessionId;
+    history.unshift(existing);
+  } else {
+    // Prepend new entry (most recent first)
+    history.unshift(entry);
+  }
 
   // Keep max 20 entries
   if (history.length > 20) history.length = 20;

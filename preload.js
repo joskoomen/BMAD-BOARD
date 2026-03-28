@@ -92,5 +92,10 @@ contextBridge.exposeInMainWorld('api', {
   onShowSettings: (callback) => {
     ipcRenderer.on('show-settings', callback);
     return () => ipcRenderer.removeListener('show-settings', callback);
+  },
+  onCompanionLaunchCommand: (callback) => {
+    const handler = (_, payload) => callback(payload);
+    ipcRenderer.on('companion-launch-command', handler);
+    return () => ipcRenderer.removeListener('companion-launch-command', handler);
   }
 });

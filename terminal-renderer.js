@@ -216,7 +216,13 @@ function loadXtermModules() {
       fitScript.onload = () => {
         const linksScript = document.createElement('script');
         linksScript.src = './node_modules/@xterm/addon-web-links/lib/addon-web-links.js';
-        linksScript.onload = () => { xtermLoaded = true; resolve(); };
+        linksScript.onload = () => {
+          const unicodeScript = document.createElement('script');
+          unicodeScript.src = './node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js';
+          unicodeScript.onload = () => { xtermLoaded = true; resolve(); };
+          unicodeScript.onerror = () => { xtermLoaded = true; resolve(); };
+          document.head.appendChild(unicodeScript);
+        };
         linksScript.onerror = () => { xtermLoaded = true; resolve(); };
         document.head.appendChild(linksScript);
       };
@@ -259,7 +265,7 @@ async function createTab(slashCommand, opts) {
     theme: warpTheme,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas', 'Fira Code', monospace",
     fontSize: 13,
-    lineHeight: 1.4,
+    lineHeight: 1.2,
     letterSpacing: 0,
     cursorStyle: 'bar',
     cursorBlink: true,
@@ -268,6 +274,7 @@ async function createTab(slashCommand, opts) {
     scrollback: 10000,
     tabStopWidth: 4,
     drawBoldTextInBrightColors: true,
+    fontWeightBold: 'normal',
     minimumContrastRatio: 1
   });
 
@@ -281,6 +288,11 @@ async function createTab(slashCommand, opts) {
   const WebLinksAddonClass = window.WebLinksAddon?.WebLinksAddon || (window.exports && window.exports.WebLinksAddon);
   if (WebLinksAddonClass) {
     term.loadAddon(new WebLinksAddonClass());
+  }
+  const Unicode11AddonClass = window.Unicode11Addon?.Unicode11Addon || (window.exports && window.exports.Unicode11Addon);
+  if (Unicode11AddonClass) {
+    term.loadAddon(new Unicode11AddonClass());
+    term.unicode.activeVersion = '11';
   }
 
   // Create container element
@@ -341,6 +353,7 @@ async function createTab(slashCommand, opts) {
     if (tab.fitAddon && tab.term && tab.id === activeTabId) {
       try {
         tab.fitAddon.fit();
+        tab.term.scrollToBottom();
       } catch { /* ignore */
       }
     }
@@ -461,12 +474,14 @@ function switchTab(tabId) {
     showNextStepBar(tab);
   }
 
-  // Fit and focus
+  // Fit and focus — stagger to ensure layout has settled
   if (tab.fitAddon) {
-    setTimeout(() => {
+    const doFit = () => {
       try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      tab.term.focus();
-    }, 50);
+      tab.term.scrollToBottom();
+    };
+    setTimeout(() => { doFit(); tab.term.focus(); }, 50);
+    setTimeout(doFit, 200);
   }
 
   updateStatusDot();
@@ -1014,16 +1029,18 @@ function setupBmadActions() {
 // ── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
 document.addEventListener('keydown', (e) => {
-  // Cmd+K = Command palette (when terminal view is active)
+  // Cmd+K = Command palette (works from any view)
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    if (currentView === 'terminal') {
-      e.preventDefault();
-      const palette = document.getElementById('command-palette');
-      if (palette && !palette.classList.contains('hidden')) {
-        hidePalette();
-      } else {
-        showPalette();
-      }
+    e.preventDefault();
+    if (currentView !== 'terminal') {
+      const sv = window.showView || function() {};
+      sv('terminal');
+    }
+    const palette = document.getElementById('command-palette');
+    if (palette && !palette.classList.contains('hidden')) {
+      hidePalette();
+    } else {
+      showPalette();
     }
   }
 
@@ -1060,6 +1077,16 @@ async function initTerminal() {
   await createTab(pending || null, pendingOpts || undefined);
 }
 
+// ── Companion: launch command from mobile ─────────────────────────────────────
+
+window.api.onCompanionLaunchCommand(({ command, storySlug, phase }) => {
+  // Switch to terminal view and open a new tab with the command
+  if (typeof window.showView === 'function') {
+    window.showView('terminal');
+  }
+  window.sendToTerminal(command, { storySlug, storyPhase: phase });
+});
+
 // ── Integration with main app.js view system ─────────────────────────────────
 
 const originalShowView = window.showView;
@@ -1091,10 +1118,9 @@ function terminalAwareShowView(view) {
         // Just focus the active tab
         const tab = getActiveTab();
         if (tab && tab.fitAddon) {
-          setTimeout(() => {
-            try { tab.fitAddon.fit(); } catch { /* ignore */ }
-            tab.term.focus();
-          }, 50);
+          const doFit = () => { try { tab.fitAddon.fit(); } catch { /* ignore */ } tab.term.scrollToBottom(); };
+          setTimeout(() => { doFit(); tab.term.focus(); }, 50);
+          setTimeout(doFit, 200);
         }
         // If no tabs exist, create one
         if (tabs.size === 0) {
@@ -1112,9 +1138,9 @@ function terminalAwareShowView(view) {
     // Refit terminal when switching views (split size may have changed)
     const tab = getActiveTab();
     if (tab && tab.fitAddon) {
-      setTimeout(() => {
-        try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      }, 50);
+      const doFit = () => { try { tab.fitAddon.fit(); } catch { /* ignore */ } tab.term.scrollToBottom(); };
+      setTimeout(doFit, 50);
+      setTimeout(doFit, 200);
     }
   }
 }
