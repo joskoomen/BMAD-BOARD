@@ -656,17 +656,24 @@ function showView(view) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
   // Terminal-only mode: hide top pane + handle, let bottom fill the space
+  // Full-content mode (git, settings): hide bottom pane + handle, let top fill
   const splitTop = document.getElementById('split-top');
   const splitHandle = document.getElementById('split-handle');
   const splitBottom = document.getElementById('split-bottom');
+  const hideTerminal = view === 'git' || view === 'settings';
+
   if (view === 'terminal') {
     if (splitTop) splitTop.style.display = 'none';
     if (splitHandle) splitHandle.style.display = 'none';
-    if (splitBottom) splitBottom.style.flex = '1';
+    if (splitBottom) { splitBottom.style.flex = '1'; splitBottom.style.display = ''; }
+  } else if (hideTerminal) {
+    if (splitTop) { splitTop.style.display = ''; splitTop.style.flex = '1'; }
+    if (splitHandle) splitHandle.style.display = 'none';
+    if (splitBottom) splitBottom.style.display = 'none';
   } else {
-    if (splitTop) splitTop.style.display = '';
+    if (splitTop) { splitTop.style.display = ''; splitTop.style.flex = ''; }
     if (splitHandle) splitHandle.style.display = '';
-    if (splitBottom) splitBottom.style.flex = '';
+    if (splitBottom) { splitBottom.style.flex = ''; splitBottom.style.display = ''; }
   }
 
   switch (view) {
