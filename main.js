@@ -763,6 +763,38 @@ ipcMain.handle('project:unarchive', (_, projectPath) => {
   return true;
 });
 
+// ── IPC: Git ────────────────────────────────────────────────────────────
+
+const { GitManager } = require('./lib/git-manager');
+
+ipcMain.handle('git:is-repo', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return false;
+  const gm = new GitManager(projectPath);
+  return gm.isRepo();
+});
+
+ipcMain.handle('git:status', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.status();
+});
+
+ipcMain.handle('git:branches', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.branches();
+});
+
+ipcMain.handle('git:log', async (event, limit) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.log(limit || 25);
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;

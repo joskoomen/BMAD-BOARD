@@ -83,6 +83,7 @@ let editorContent = {};      // key -> current editor text
 let searchQuery = '';
 let previousStoryStates = {};  // slug -> status, for change detection
 let pollTimer = null;
+let isGitRepo = false;         // whether the current project is a git repo
 
 // ── Phase Config (mirror of lib/phase-commands.js for renderer) ─────────
 
@@ -111,6 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     projectData = data;
     snapshotStoryStates();
     await refreshProjectList();
+    await detectGitRepo();
     showView('epics');
     startPhasePoller();
   } else {
@@ -238,6 +240,7 @@ async function openProject() {
   projectData = data;
   snapshotStoryStates();
   await refreshProjectList();
+  await detectGitRepo();
   showView('epics');
   startPhasePoller();
 }
@@ -254,6 +257,148 @@ async function refreshProject() {
     } else if (currentView === 'documents') renderDocuments();
   }
 }
+
+// ── Git Repo Detection ──────────────────────────────────────────────────
+
+async function detectGitRepo() {
+  try {
+    isGitRepo = await window.api.gitIsRepo();
+  } catch {
+    isGitRepo = false;
+  }
+  const navGit = document.getElementById('nav-git');
+  if (navGit) navGit.classList.toggle('hidden', !isGitRepo);
+}
+
+// ── Git View ────────────────────────────────────────────────────────────
+
+function formatTimeAgo(dateStr) {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const seconds = Math.floor((now - date) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
+async function renderGitView() {
+  const container = document.getElementById('git-content');
+  if (!container) return;
+
+  if (!isGitRepo) {
+    container.innerHTML = '<p class="git-empty">This project is not a git repository.</p>';
+    return;
+  }
+
+  container.innerHTML = '<p class="git-loading">Loading git data...</p>';
+
+  try {
+    const [branches, status, log] = await Promise.all([
+      window.api.gitBranches(),
+      window.api.gitStatus(),
+      window.api.gitLog(25)
+    ]);
+
+    if (branches.error || status.error) {
+      container.innerHTML = `<p class="git-empty">Error: ${branches.error || status.error}</p>`;
+      return;
+    }
+
+    const aheadBehind = [];
+    if (status.ahead > 0) aheadBehind.push(`<span class="git-ahead" title="Commits ahead of remote">&uarr;${status.ahead}</span>`);
+    if (status.behind > 0) aheadBehind.push(`<span class="git-behind" title="Commits behind remote">&darr;${status.behind}</span>`);
+    const syncIndicator = aheadBehind.length ? aheadBehind.join(' ') : '<span class="git-synced">in sync</span>';
+
+    const changedCount = status.files.length;
+    const changedBadge = changedCount > 0
+      ? `<span class="git-changes-badge" title="${changedCount} changed file(s)">${changedCount} changed</span>`
+      : '<span class="git-clean-badge">clean</span>';
+
+    const localBranchesHtml = branches.local.map(b => `
+      <div class="git-branch-item ${b.current ? 'git-branch-current' : ''}">
+        <span class="git-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
+        <span class="git-branch-name">${b.name}</span>
+        ${b.current ? '<span class="git-branch-tag">HEAD</span>' : ''}
+      </div>
+    `).join('');
+
+    const remoteBranchesHtml = branches.remote.map(b => `
+      <div class="git-branch-item git-branch-remote">
+        <span class="git-branch-icon">&#9675;</span>
+        <span class="git-branch-name">${b.name}</span>
+      </div>
+    `).join('');
+
+    const commitsHtml = log.map(c => `
+      <div class="git-commit-item">
+        <span class="git-commit-hash">${c.hashShort}</span>
+        <span class="git-commit-message">${c.message}</span>
+        <span class="git-commit-meta">${c.author} &middot; ${formatTimeAgo(c.date)}</span>
+      </div>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="git-status-bar">
+        <div class="git-status-branch">
+          <span class="git-status-label">Branch:</span>
+          <strong>${status.current}</strong>
+          ${status.tracking ? `<span class="git-tracking">&rarr; ${status.tracking}</span>` : ''}
+        </div>
+        <div class="git-status-indicators">
+          ${syncIndicator}
+          ${changedBadge}
+        </div>
+      </div>
+
+      <div class="git-panels">
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Local Branches</h3>
+            <span class="git-panel-count">${branches.local.length}</span>
+          </div>
+          <div class="git-branch-list">
+            ${localBranchesHtml || '<p class="git-empty">No local branches</p>'}
+          </div>
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Remote Branches</h3>
+            <span class="git-panel-count">${branches.remote.length}</span>
+          </div>
+          <div class="git-branch-list">
+            ${remoteBranchesHtml || '<p class="git-empty">No remote branches</p>'}
+          </div>
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Recent Commits</h3>
+            <span class="git-panel-count">${log.length}</span>
+          </div>
+          <div class="git-commit-list">
+            ${commitsHtml || '<p class="git-empty">No commits yet</p>'}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<p class="git-empty">Failed to load git data: ${err.message}</p>`;
+  }
+}
+
+// Wire refresh button
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'btn-git-refresh' || e.target.closest('#btn-git-refresh')) {
+    renderGitView();
+  }
+});
 
 // ── Toast Notifications ─────────────────────────────────────────────────
 
@@ -452,6 +597,11 @@ function showView(view) {
       document.querySelector('[data-view="history"]')?.classList.add('active');
       document.getElementById('view-history')?.classList.add('active');
       if (typeof window.renderSessionHistory === 'function') window.renderSessionHistory();
+      break;
+    case 'git':
+      document.querySelector('[data-view="git"]')?.classList.add('active');
+      document.getElementById('view-git')?.classList.add('active');
+      renderGitView();
       break;
     case 'settings':
       document.querySelector('[data-view="settings"]')?.classList.add('active');
@@ -1316,11 +1466,13 @@ function setupProjectSelector() {
       projectData = data;
       snapshotStoryStates();
       await refreshProjectList();
+      await detectGitRepo();
       showView('epics');
       startPhasePoller();
     } else {
       projectData = null;
       stopPhasePoller();
+      await detectGitRepo();
       showView('welcome');
       showWarning('Could not load project — BMAD files not found.');
     }
@@ -1350,6 +1502,7 @@ function setupInlineProjectSelect(selectId) {
       projectData = data;
       snapshotStoryStates();
       await refreshProjectList();
+      await detectGitRepo();
       showView('epics');
       startPhasePoller();
     }

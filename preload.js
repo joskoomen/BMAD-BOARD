@@ -59,6 +59,12 @@ contextBridge.exposeInMainWorld('api', {
   launchPartyMode: () => ipcRenderer.invoke('launch-party-mode'),
   openTerminal: (command) => ipcRenderer.invoke('open-terminal', command),
 
+  // Git
+  gitIsRepo: () => ipcRenderer.invoke('git:is-repo'),
+  gitStatus: () => ipcRenderer.invoke('git:status'),
+  gitBranches: () => ipcRenderer.invoke('git:branches'),
+  gitLog: (limit) => ipcRenderer.invoke('git:log', limit),
+
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),
   toggleCompanion: (enabled) => ipcRenderer.invoke('companion:toggle', enabled),
