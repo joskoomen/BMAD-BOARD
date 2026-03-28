@@ -1029,16 +1029,18 @@ function setupBmadActions() {
 // ── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
 document.addEventListener('keydown', (e) => {
-  // Cmd+K = Command palette (when terminal view is active)
+  // Cmd+K = Command palette (works from any view)
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    if (currentView === 'terminal') {
-      e.preventDefault();
-      const palette = document.getElementById('command-palette');
-      if (palette && !palette.classList.contains('hidden')) {
-        hidePalette();
-      } else {
-        showPalette();
-      }
+    e.preventDefault();
+    if (currentView !== 'terminal') {
+      const sv = window.showView || function() {};
+      sv('terminal');
+    }
+    const palette = document.getElementById('command-palette');
+    if (palette && !palette.classList.contains('hidden')) {
+      hidePalette();
+    } else {
+      showPalette();
     }
   }
 

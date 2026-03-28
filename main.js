@@ -54,8 +54,9 @@ function createWindow() {
 
   win.loadFile('index.html');
 
+  const webContentsId = win.webContents.id;
   win.on('closed', () => {
-    windowProjectPaths.delete(win.webContents.id);
+    windowProjectPaths.delete(webContentsId);
   });
 
   // Keep mainWindow pointing to latest for backward compat
