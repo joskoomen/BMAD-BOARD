@@ -788,6 +788,349 @@ ipcMain.handle('project:unarchive', (_, projectPath) => {
   return true;
 });
 
+// ── IPC: Git ────────────────────────────────────────────────────────────
+
+const { GitManager } = require('./lib/git-manager');
+
+ipcMain.handle('git:is-repo', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return false;
+  const gm = new GitManager(projectPath);
+  return gm.isRepo();
+});
+
+ipcMain.handle('git:status', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.status();
+});
+
+ipcMain.handle('git:branches', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.branches();
+});
+
+ipcMain.handle('git:log', async (event, limit) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.log(limit || 25);
+});
+
+ipcMain.handle('git:checkout', async (event, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.checkout(branch);
+});
+
+ipcMain.handle('git:create-branch', async (event, name, startPoint) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.createBranch(name, startPoint);
+});
+
+ipcMain.handle('git:fetch', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.fetch();
+  return { ok: true };
+});
+
+ipcMain.handle('git:pull', async (event, remote, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.pull(remote, branch);
+});
+
+ipcMain.handle('git:push', async (event, remote, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.push(remote, branch);
+  return { ok: true };
+});
+
+ipcMain.handle('git:merge', async (event, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.merge(branch);
+});
+
+ipcMain.handle('git:abort-merge', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.abortMerge();
+  return { ok: true };
+});
+
+ipcMain.handle('git:tags', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return [];
+  const gm = new GitManager(projectPath);
+  return gm.tags();
+});
+
+ipcMain.handle('git:create-tag', async (event, name, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.createTag(name, message);
+  return { ok: true };
+});
+
+ipcMain.handle('git:delete-tag', async (event, name) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.deleteTag(name);
+  return { ok: true };
+});
+
+ipcMain.handle('git:push-tag', async (event, name) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.pushTag(name);
+  return { ok: true };
+});
+
+ipcMain.handle('git:push-all-tags', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.pushAllTags();
+  return { ok: true };
+});
+
+ipcMain.handle('git:open-merge-tool', async (event, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  try {
+    await gm.openMergeTool(file);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('git:stage', async (event, files) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.stage(files);
+  return { ok: true };
+});
+
+ipcMain.handle('git:stage-all', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.stageAll();
+  return { ok: true };
+});
+
+ipcMain.handle('git:unstage', async (event, files) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.unstage(files);
+  return { ok: true };
+});
+
+ipcMain.handle('git:diff', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.diff();
+});
+
+ipcMain.handle('git:diff-file', async (event, file, staged) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.diffFile(file, staged);
+});
+
+ipcMain.handle('git:commit', async (event, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.commit(message);
+});
+
+ipcMain.handle('git:has-gh-cli', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return false;
+  const gm = new GitManager(projectPath);
+  return gm.hasGhCli();
+});
+
+ipcMain.handle('git:remote-url', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return null;
+  const gm = new GitManager(projectPath);
+  return gm.getRemoteUrl();
+});
+
+// Stash
+ipcMain.handle('git:stash-list', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return [];
+  const gm = new GitManager(projectPath);
+  return gm.stashList();
+});
+
+ipcMain.handle('git:stash', async (event, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.stash(message);
+});
+
+ipcMain.handle('git:stash-pop', async (event, index) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.stashPop(index);
+});
+
+ipcMain.handle('git:stash-drop', async (event, index) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.stashDrop(index);
+});
+
+// Branch delete
+ipcMain.handle('git:delete-branch', async (event, name, force) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.deleteBranch(name, force);
+});
+
+ipcMain.handle('git:delete-remote-branch', async (event, name) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.deleteRemoteBranch(name);
+});
+
+// Commit detail
+ipcMain.handle('git:show-commit', async (event, hash) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.showCommit(hash);
+});
+
+ipcMain.handle('git:commit-diff', async (event, hash) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.commitDiff(hash);
+});
+
+ipcMain.handle('git:commit-file-diff', async (event, hash, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.commitFileDiff(hash, file);
+});
+
+// Discard
+ipcMain.handle('git:discard-file', async (event, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.discardFile(file);
+});
+
+ipcMain.handle('git:discard-all', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.discardAll();
+});
+
+// Amend
+ipcMain.handle('git:amend', async (event, message) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.amend(message);
+});
+
+// Revert
+ipcMain.handle('git:revert', async (event, hash) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.revert(hash);
+});
+
+// Rebase
+ipcMain.handle('git:rebase', async (event, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.rebase(branch);
+});
+
+ipcMain.handle('git:rebase-abort', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.rebaseAbort();
+});
+
+ipcMain.handle('git:rebase-continue', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.rebaseContinue();
+});
+
+ipcMain.handle('git:is-rebasing', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return false;
+  const gm = new GitManager(projectPath);
+  return gm.isRebasing();
+});
+
+// File history
+ipcMain.handle('git:file-log', async (event, file, limit) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return [];
+  const gm = new GitManager(projectPath);
+  return gm.fileLog(file, limit);
+});
+
+// Conflict resolution
+ipcMain.handle('git:read-conflict-file', async (event, file) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.readConflictFile(file);
+});
+
+ipcMain.handle('git:resolve-conflict', async (event, file, content) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.resolveConflict(file, content);
+});
+
 // ── File Versioning ──────────────────────────────────────────────────────
 
 const MAX_VERSIONS_PER_FILE = 20;

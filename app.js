@@ -83,6 +83,8 @@ let editorContent = {};      // key -> current editor text
 let searchQuery = '';
 let previousStoryStates = {};  // slug -> status, for change detection
 let pollTimer = null;
+let isGitRepo = false;         // whether the current project is a git repo
+let gitAutoFetchTimer = null;  // auto-fetch interval timer
 
 // ── Phase Config (mirror of lib/phase-commands.js for renderer) ─────────
 
@@ -111,6 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     projectData = data;
     snapshotStoryStates();
     await refreshProjectList();
+    await detectGitRepo();
     showView('epics');
     startPhasePoller();
   } else {
@@ -184,8 +187,8 @@ function setupNavigation() {
         if (projectData) sv('documents');
       } else if (view === 'history') {
         sv('history');
-      } else if (view === 'settings') {
-        sv('settings');
+      } else if (view === 'git') {
+        if (isGitRepo) sv('git');
       } else if (view === 'terminal') {
         sv('terminal');
       }
@@ -247,6 +250,7 @@ async function openProject() {
   projectData = data;
   snapshotStoryStates();
   await refreshProjectList();
+  await detectGitRepo();
   showView('epics');
   startPhasePoller();
 }
@@ -263,6 +267,1555 @@ async function refreshProject() {
     } else if (currentView === 'documents') renderDocuments();
   }
 }
+
+// ── Git Repo Detection ──────────────────────────────────────────────────
+
+async function detectGitRepo() {
+  try {
+    isGitRepo = await window.api.gitIsRepo();
+  } catch {
+    isGitRepo = false;
+  }
+  const navGit = document.getElementById('nav-git');
+  if (navGit) navGit.classList.toggle('hidden', !isGitRepo);
+
+  // Start auto-fetch if enabled
+  if (isGitRepo) startGitAutoFetch();
+}
+
+async function startGitAutoFetch() {
+  stopGitAutoFetch();
+  try {
+    const settings = await window.api.getSettings();
+    const interval = settings?.git?.autoFetchInterval ?? 5;
+    if (interval <= 0) return; // disabled
+    gitAutoFetchTimer = setInterval(async () => {
+      if (!isGitRepo) return;
+      try {
+        await window.api.gitFetch();
+        // If we're on the git view, refresh silently
+        const activeView = document.querySelector('.view.active');
+        if (activeView?.id === 'view-git') {
+          renderGitView();
+        }
+      } catch { /* silent fail */ }
+    }, interval * 60 * 1000);
+  } catch { /* no settings yet */ }
+}
+
+function stopGitAutoFetch() {
+  if (gitAutoFetchTimer) {
+    clearInterval(gitAutoFetchTimer);
+    gitAutoFetchTimer = null;
+  }
+}
+
+// ── Git View ────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function formatDiff(diff) {
+  return diff.split('\n').map(line => {
+    const escaped = escapeHtml(line);
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      return `<span class="git-diff-add">${escaped}</span>`;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      return `<span class="git-diff-del">${escaped}</span>`;
+    } else if (line.startsWith('@@')) {
+      return `<span class="git-diff-hunk">${escaped}</span>`;
+    }
+    return escaped;
+  }).join('\n');
+}
+
+/**
+ * Parse git conflict markers into structured blocks.
+ * Returns array of { type: 'clean'|'conflict', content, ours, theirs }
+ */
+function parseConflicts(content) {
+  const blocks = [];
+  const lines = content.split('\n');
+  let current = [];
+  let inConflict = false;
+  let ours = [];
+  let theirs = [];
+  let inTheirs = false;
+
+  for (const line of lines) {
+    if (line.startsWith('<<<<<<<')) {
+      // Flush any clean lines
+      if (current.length) {
+        blocks.push({ type: 'clean', content: current.join('\n') });
+        current = [];
+      }
+      inConflict = true;
+      inTheirs = false;
+      ours = [];
+      theirs = [];
+    } else if (line.startsWith('=======') && inConflict) {
+      inTheirs = true;
+    } else if (line.startsWith('>>>>>>>') && inConflict) {
+      blocks.push({
+        type: 'conflict',
+        ours: ours.join('\n'),
+        theirs: theirs.join('\n')
+      });
+      inConflict = false;
+      inTheirs = false;
+    } else if (inConflict) {
+      if (inTheirs) {
+        theirs.push(line);
+      } else {
+        ours.push(line);
+      }
+    } else {
+      current.push(line);
+    }
+  }
+
+  if (current.length) {
+    blocks.push({ type: 'clean', content: current.join('\n') });
+  }
+
+  return blocks;
+}
+
+/**
+ * Render the conflict viewer HTML for a file.
+ */
+function renderConflictViewer(fileName, blocks) {
+  let html = `<div class="git-diff-header">
+    <span>Conflicts: ${escapeHtml(fileName)}</span>
+    <div class="git-conflict-header-actions">
+      <button class="btn btn-ghost btn-xs" data-conflict-accept-all="ours" title="Accept all ours">Accept All Ours</button>
+      <button class="btn btn-ghost btn-xs" data-conflict-accept-all="theirs" title="Accept all theirs">Accept All Theirs</button>
+      <button class="btn btn-ghost btn-xs" id="btn-close-conflict">&times;</button>
+    </div>
+  </div>`;
+
+  html += '<div class="git-conflict-blocks">';
+
+  blocks.forEach((block, i) => {
+    if (block.type === 'clean') {
+      const lines = block.content.split('\n');
+      // Show abbreviated clean blocks (first/last 3 lines if long)
+      if (lines.length > 6) {
+        html += `<pre class="git-conflict-clean">${escapeHtml(lines.slice(0, 3).join('\n'))}\n<span class="git-conflict-fold">... ${lines.length - 6} lines hidden ...</span>\n${escapeHtml(lines.slice(-3).join('\n'))}</pre>`;
+      } else {
+        html += `<pre class="git-conflict-clean">${escapeHtml(block.content)}</pre>`;
+      }
+    } else {
+      html += `<div class="git-conflict-block" data-conflict-index="${i}">
+        <div class="git-conflict-actions">
+          <button class="btn btn-sm git-conflict-btn-ours" data-resolve-block="${i}" data-resolve-choice="ours">Accept Ours</button>
+          <button class="btn btn-sm git-conflict-btn-both" data-resolve-block="${i}" data-resolve-choice="both">Accept Both</button>
+          <button class="btn btn-sm git-conflict-btn-theirs" data-resolve-block="${i}" data-resolve-choice="theirs">Accept Theirs</button>
+        </div>
+        <div class="git-conflict-sides">
+          <div class="git-conflict-side git-conflict-ours">
+            <div class="git-conflict-side-label">Ours (current)</div>
+            <pre>${escapeHtml(block.ours)}</pre>
+          </div>
+          <div class="git-conflict-side git-conflict-theirs">
+            <div class="git-conflict-side-label">Theirs (incoming)</div>
+            <pre>${escapeHtml(block.theirs)}</pre>
+          </div>
+        </div>
+      </div>`;
+    }
+  });
+
+  html += '</div>';
+  html += `<div class="git-conflict-save">
+    <button class="btn btn-primary btn-sm" id="btn-git-save-conflict" data-conflict-file="${escapeHtml(fileName)}">Save &amp; Mark Resolved</button>
+  </div>`;
+
+  return html;
+}
+
+function gitBtnLoading(btn, label) {
+  btn.disabled = true;
+  btn.innerHTML = `<span class="git-spinner"></span> ${label}`;
+  btn.classList.add('git-btn-loading');
+}
+
+function gitBtnDone(btn, label) {
+  btn.disabled = false;
+  btn.textContent = label;
+  btn.classList.remove('git-btn-loading');
+}
+
+function formatTimeAgo(dateStr) {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const seconds = Math.floor((now - date) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
+async function renderGitView() {
+  const container = document.getElementById('git-content');
+  if (!container) return;
+
+  if (!isGitRepo) {
+    container.innerHTML = '<p class="git-empty">This project is not a git repository.</p>';
+    return;
+  }
+
+  container.innerHTML = '<div class="git-loading"><span class="git-spinner git-spinner-lg"></span> Loading git data...</div>';
+
+  try {
+    const [branches, status, log, tags, hasGh, stashList, isRebasing] = await Promise.all([
+      window.api.gitBranches(),
+      window.api.gitStatus(),
+      window.api.gitLog(25),
+      window.api.gitTags(),
+      window.api.gitHasGhCli(),
+      window.api.gitStashList(),
+      window.api.gitIsRebasing()
+    ]);
+
+    if (branches.error || status.error) {
+      container.innerHTML = `<p class="git-empty">Error: ${branches.error || status.error}</p>`;
+      return;
+    }
+
+    // ── Render branches in sidebar ──
+    const currentBranch = branches.current;
+    const sidebarBranches = document.getElementById('git-sidebar-branches');
+    if (sidebarBranches) {
+      const localHtml = branches.local.map(b => {
+        const arrows = [];
+        if (b.ahead > 0) arrows.push(`<span class="git-branch-ahead" title="${b.ahead} ahead">&uarr;${b.ahead}</span>`);
+        if (b.behind > 0) arrows.push(`<span class="git-branch-behind" title="${b.behind} behind">&darr;${b.behind}</span>`);
+        return `
+        <div class="git-sidebar-branch ${b.current ? 'git-sidebar-branch-current git-merge-drop-target' : 'git-sidebar-branch-clickable'}"
+             ${b.current ? '' : `data-branch="${b.name}"`}
+             ${!b.current ? `draggable="true" data-drag-branch="${b.name}"` : ''}
+             data-context-branch="${b.name}"
+             title="${b.current ? 'Current branch (drop here to merge)' : `Checkout ${b.name}`}">
+          <span class="git-sidebar-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
+          <span class="git-sidebar-branch-name">${b.name}</span>
+          ${arrows.length ? `<span class="git-branch-arrows">${arrows.join(' ')}</span>` : ''}
+          ${b.current ? '<span class="git-branch-tag">HEAD</span>' : ''}
+        </div>
+      `}).join('');
+
+      const remoteHtml = branches.remote.map(b => {
+        const localName = b.name.replace(/^[^/]+\//, '');
+        const hasLocal = branches.local.some(lb => lb.name === localName);
+        return `
+          <div class="git-sidebar-branch git-sidebar-branch-remote ${hasLocal ? '' : 'git-sidebar-branch-clickable'}"
+               ${hasLocal ? '' : `data-remote-branch="${b.name}"`}
+               draggable="true" data-drag-branch="${b.name}"
+               data-context-branch="${b.name}"
+               title="${hasLocal ? 'Tracked locally' : `Checkout ${localName}`}">
+            <span class="git-sidebar-branch-icon">&#9675;</span>
+            <span class="git-sidebar-branch-name">${b.name}</span>
+          </div>
+        `;
+      }).join('');
+
+      sidebarBranches.innerHTML = `
+        <div class="git-sidebar-group">
+          <div class="git-sidebar-group-title">Local <span class="git-panel-count">${branches.local.length}</span>
+            <button class="btn btn-ghost btn-xs git-sidebar-new-branch-btn" id="btn-git-new-branch" title="New branch">+</button>
+          </div>
+          <div id="git-new-branch-form" class="git-new-branch-form hidden">
+            <select id="git-branch-prefix" class="git-branch-prefix-select">
+              <option value="">no prefix</option>
+              <option value="feature/">feature/</option>
+              <option value="bugfix/">bugfix/</option>
+              <option value="hotfix/">hotfix/</option>
+              <option value="release/">release/</option>
+              <option value="chore/">chore/</option>
+              <option value="refactor/">refactor/</option>
+            </select>
+            <input type="text" id="git-branch-name" class="git-branch-name-input" placeholder="branch-name">
+            <div class="git-branch-start-row">
+              <label class="git-branch-start-label">from</label>
+              <select id="git-branch-start" class="git-branch-start-select">
+                ${branches.local.map(b => `<option value="${b.name}" ${b.current ? 'selected' : ''}>${b.name}${b.current ? ' (HEAD)' : ''}</option>`).join('')}
+              </select>
+            </div>
+            <div class="git-branch-form-actions">
+              <button class="btn btn-ghost btn-xs" id="btn-git-cancel-branch">Cancel</button>
+              <button class="btn btn-primary btn-xs" id="btn-git-create-branch">Create</button>
+            </div>
+          </div>
+          ${localHtml}
+        </div>
+        <div class="git-sidebar-group">
+          <div class="git-sidebar-group-title">Remote <span class="git-panel-count">${branches.remote.length}</span></div>
+          ${remoteHtml}
+        </div>
+      `;
+
+      // Wire drag & drop for merge
+      setupBranchDragDrop(sidebarBranches, currentBranch);
+    }
+
+    // ── Classify files into staged / unstaged ──
+    const staged = [];
+    const unstaged = [];
+    for (const f of status.files) {
+      // index: staged status, working_dir: unstaged status
+      if (f.index && f.index !== ' ' && f.index !== '?') {
+        staged.push(f);
+      }
+      if (f.working_dir && f.working_dir !== ' ') {
+        unstaged.push(f);
+      }
+      // Untracked files (? in both)
+      if (f.index === '?' && f.working_dir === '?') {
+        if (!unstaged.includes(f)) unstaged.push(f);
+      }
+    }
+
+    const fileStatusLabel = (code) => {
+      const labels = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', '?': 'untracked' };
+      return labels[code] || code;
+    };
+
+    const stagedHtml = staged.map(f => `
+      <div class="git-file-item git-file-staged">
+        <input type="checkbox" class="git-file-check" checked data-unstage-file="${f.path}">
+        <span class="git-file-status git-file-status-${f.index.toLowerCase()}">${f.index}</span>
+        <span class="git-file-name" data-diff-file="${f.path}" data-diff-staged="true" title="Click to view diff">${f.path}</span>
+      </div>
+    `).join('');
+
+    const unstagedHtml = unstaged.map(f => `
+      <div class="git-file-item git-file-unstaged">
+        <input type="checkbox" class="git-file-check" data-stage-file="${f.path}">
+        <span class="git-file-status git-file-status-${(f.working_dir || '?').toLowerCase()}">${f.working_dir || '?'}</span>
+        <span class="git-file-name" data-diff-file="${f.path}" data-diff-staged="false" title="Click to view diff">${f.path}</span>
+        <button class="btn btn-ghost btn-xs git-discard-file" data-discard-file="${f.path}" title="Discard changes">&#8630;</button>
+      </div>
+    `).join('');
+
+    // ── Render main content ──
+    const aheadBehind = [];
+    if (status.ahead > 0) aheadBehind.push(`<span class="git-ahead" title="Commits ahead of remote">&uarr;${status.ahead}</span>`);
+    if (status.behind > 0) aheadBehind.push(`<span class="git-behind" title="Commits behind remote">&darr;${status.behind}</span>`);
+    const syncIndicator = aheadBehind.length ? aheadBehind.join(' ') : '<span class="git-synced">in sync</span>';
+
+    const hasPushTarget = !!status.tracking;
+
+    const commitsHtml = log.map(c => `
+      <div class="git-commit-item git-commit-clickable" data-show-commit="${c.hash}">
+        <span class="git-commit-hash">${c.hashShort}</span>
+        <span class="git-commit-message">${c.message}</span>
+        <span class="git-commit-meta">${c.author} &middot; ${formatTimeAgo(c.date)}</span>
+      </div>
+    `).join('');
+
+    // Preserve commit message if user was typing
+    const existingMsg = document.getElementById('git-commit-message');
+    const preservedMsg = existingMsg ? existingMsg.value : '';
+    const existingConv = document.getElementById('git-conventional-toggle');
+    const preservedConv = existingConv ? existingConv.checked : false;
+    const existingType = document.getElementById('git-conv-type');
+    const preservedType = existingType ? existingType.value : 'feat';
+    const existingScope = document.getElementById('git-conv-scope');
+    const preservedScope = existingScope ? existingScope.value : '';
+
+    container.innerHTML = `
+      <div class="git-toolbar">
+        <button class="btn btn-ghost btn-sm" id="btn-git-fetch" title="Fetch all remotes">Fetch</button>
+        <button class="btn btn-ghost btn-sm" id="btn-git-pull" ${hasPushTarget ? '' : 'disabled'} title="${hasPushTarget ? `Pull from ${status.tracking}` : 'No tracking branch'}">
+          Pull${status.behind > 0 ? ` <span class="git-btn-badge">&darr;${status.behind}</span>` : ''}
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-git-push" ${hasPushTarget ? '' : 'disabled'} title="${hasPushTarget ? `Push to ${status.tracking}` : 'No tracking branch'}">
+          Push${status.ahead > 0 ? ` <span class="git-btn-badge">&uarr;${status.ahead}</span>` : ''}
+        </button>
+      </div>
+
+      <div class="git-status-bar">
+        <div class="git-status-branch">
+          <span class="git-status-label">Branch:</span>
+          <strong>${status.current}</strong>
+          ${status.tracking ? `<span class="git-tracking">&rarr; ${status.tracking}</span>` : ''}
+        </div>
+        <div class="git-status-indicators">
+          ${syncIndicator}
+        </div>
+      </div>
+
+      ${status.merging ? `
+      <div class="git-merge-banner">
+        <span class="git-merge-banner-text">Merge in progress${status.conflicted.length > 0 ? ` — ${status.conflicted.length} conflict(s)` : ''}</span>
+        <div class="git-merge-banner-actions">
+          ${status.conflicted.length > 0 ? '<button class="btn btn-primary btn-sm" id="btn-git-resolve-llm">Resolve with LLM</button>' : ''}
+          <button class="btn btn-ghost btn-sm" id="btn-git-abort-merge">Abort Merge</button>
+        </div>
+        ${status.conflicted.length > 0 ? `
+        <div class="git-conflict-files">
+          ${status.conflicted.map(f => `
+            <div class="git-conflict-file" data-conflict-file="${f}">
+              <span class="git-file-status git-file-status-u">U</span>
+              <span class="git-file-name">${f}</span>
+            </div>
+          `).join('')}
+        </div>` : ''}
+      </div>
+      ` : ''}
+
+      ${isRebasing ? `
+      <div class="git-rebase-banner">
+        <span class="git-merge-banner-text">Rebase in progress${status.conflicted.length > 0 ? ` — ${status.conflicted.length} conflict(s)` : ''}</span>
+        <div class="git-merge-banner-actions">
+          ${status.conflicted.length > 0 ? '<button class="btn btn-primary btn-sm" id="btn-git-resolve-llm">Resolve with LLM</button>' : ''}
+          <button class="btn btn-primary btn-sm" id="btn-git-rebase-continue">Continue Rebase</button>
+          <button class="btn btn-ghost btn-sm" id="btn-git-rebase-abort">Abort Rebase</button>
+        </div>
+        ${status.conflicted.length > 0 ? `
+        <div class="git-conflict-files">
+          ${status.conflicted.map(f => `
+            <div class="git-conflict-file" data-conflict-file="${f}">
+              <span class="git-file-status git-file-status-u">U</span>
+              <span class="git-file-name">${f}</span>
+            </div>
+          `).join('')}
+        </div>` : ''}
+      </div>
+      ` : ''}
+
+      <div id="git-conflict-viewer" class="git-conflict-viewer hidden"></div>
+
+      <div class="git-panels">
+        ${status.files.length > 0 || staged.length > 0 ? `
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Staged</h3>
+            <span class="git-panel-count">${staged.length}</span>
+          </div>
+          <div class="git-file-list">
+            ${stagedHtml || '<p class="git-empty-sm">No staged files</p>'}
+          </div>
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Changes</h3>
+            <div class="git-panel-header-actions">
+              <span class="git-panel-count">${unstaged.length}</span>
+              ${unstaged.length > 0 ? '<button class="btn btn-ghost btn-xs git-discard-all-btn" id="btn-git-discard-all" title="Discard all changes">Discard All</button>' : ''}
+              ${unstaged.length > 0 ? '<button class="btn btn-ghost btn-xs" id="btn-git-stage-all" title="Stage all changes">Stage All</button>' : ''}
+            </div>
+          </div>
+          <div class="git-file-list">
+            ${unstagedHtml || '<p class="git-empty-sm">No unstaged changes</p>'}
+          </div>
+        </div>
+
+        <div class="git-commit-box">
+          <div class="git-commit-box-header">
+            <label class="git-conventional-label">
+              <input type="checkbox" id="git-conventional-toggle" ${preservedConv ? 'checked' : ''}>
+              Conventional Commit
+            </label>
+          </div>
+          <div class="git-conventional-fields ${preservedConv ? '' : 'hidden'}" id="git-conv-fields">
+            <select id="git-conv-type" class="git-conv-select">
+              ${['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore', 'perf', 'ci', 'build'].map(t =>
+                `<option value="${t}" ${t === preservedType ? 'selected' : ''}>${t}</option>`
+              ).join('')}
+            </select>
+            <input type="text" id="git-conv-scope" class="git-conv-input" placeholder="scope (optional)" value="${preservedScope}">
+          </div>
+          <textarea id="git-commit-message" class="git-commit-textarea" placeholder="Commit message..." rows="3">${preservedMsg}</textarea>
+          <div class="git-commit-actions">
+            <label class="git-amend-label">
+              <input type="checkbox" id="git-amend-toggle"> Amend
+            </label>
+            <button class="btn btn-ghost btn-sm" id="btn-git-generate-msg" title="Generate commit message with LLM">Generate Message</button>
+            <button class="btn btn-primary btn-sm" id="btn-git-commit" ${staged.length === 0 ? 'disabled' : ''} title="${staged.length === 0 ? 'Stage files first' : 'Commit staged changes'}">Commit</button>
+          </div>
+        </div>
+        ` : '<div class="git-clean-state"><span class="git-clean-badge">Working tree clean</span></div>'}
+
+        <div id="git-diff-viewer" class="git-diff-viewer hidden"></div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Stash</h3>
+            <div class="git-panel-header-actions">
+              <span class="git-panel-count">${stashList.length}</span>
+              <button class="btn btn-ghost btn-xs" id="btn-git-stash" title="Stash current changes">Stash</button>
+            </div>
+          </div>
+          ${stashList.length > 0 ? `<div class="git-stash-list">
+            ${stashList.map(s => `
+              <div class="git-stash-item">
+                <span class="git-stash-index">stash@{${s.index}}</span>
+                <span class="git-stash-message">${s.message}</span>
+                <div class="git-stash-actions">
+                  <button class="btn btn-ghost btn-xs" data-stash-pop="${s.index}" title="Pop (apply & remove)">Pop</button>
+                  <button class="btn btn-ghost btn-xs git-tag-delete" data-stash-drop="${s.index}" title="Drop (discard)">Drop</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>` : '<p class="git-empty-sm">No stashes</p>'}
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Recent Commits</h3>
+            <span class="git-panel-count">${log.length}</span>
+          </div>
+          <div class="git-commit-list">
+            ${commitsHtml || '<p class="git-empty">No commits yet</p>'}
+          </div>
+          <div id="git-commit-detail" class="git-commit-detail hidden"></div>
+        </div>
+
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Tags</h3>
+            <div class="git-panel-header-actions">
+              <span class="git-panel-count">${tags.length}</span>
+              <button class="btn btn-ghost btn-xs" id="btn-git-new-tag">+ New Tag</button>
+              ${tags.length > 0 ? '<button class="btn btn-ghost btn-xs" id="btn-git-push-all-tags" title="Push all tags to remote">Push All</button>' : ''}
+            </div>
+          </div>
+          <div id="git-new-tag-form" class="git-new-tag-form hidden">
+            <input type="text" id="git-tag-name" class="git-conv-input" placeholder="Tag name (e.g. v1.0.0)">
+            <input type="text" id="git-tag-message" class="git-conv-input" placeholder="Message (optional, for annotated tag)">
+            <div class="git-commit-actions">
+              <button class="btn btn-ghost btn-sm" id="btn-git-cancel-tag">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="btn-git-create-tag">Create Tag</button>
+            </div>
+          </div>
+          <div class="git-tag-list">
+            ${tags.length > 0 ? tags.slice().reverse().map(t => `
+              <div class="git-tag-item">
+                <span class="git-tag-icon">&#127991;</span>
+                <span class="git-tag-name">${t}</span>
+                <div class="git-tag-actions">
+                  <button class="btn btn-ghost btn-xs" data-push-tag="${t}" title="Push to remote">Push</button>
+                  <button class="btn btn-ghost btn-xs git-tag-delete" data-delete-tag="${t}" title="Delete tag">&#10005;</button>
+                </div>
+              </div>
+            `).join('') : '<p class="git-empty-sm">No tags</p>'}
+          </div>
+        </div>
+
+        ${hasGh ? `
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Pull Request</h3>
+          </div>
+          <div class="git-pr-form">
+            <input type="text" id="git-pr-title" class="git-conv-input" placeholder="PR title (leave empty for interactive mode)">
+            <textarea id="git-pr-body" class="git-commit-textarea" rows="3" placeholder="PR description (optional)"></textarea>
+            <div class="git-pr-options">
+              <label class="git-pr-option">
+                <input type="checkbox" id="git-pr-draft"> Draft PR
+              </label>
+              <select id="git-pr-base" class="git-conv-select git-pr-base-select">
+                ${branches.local.filter(b => !b.current).map(b =>
+                  `<option value="${b.name}" ${b.name === 'main' || b.name === 'master' ? 'selected' : ''}>${b.name}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div class="git-commit-actions">
+              <button class="btn btn-primary btn-sm" id="btn-git-create-pr">Create Pull Request</button>
+            </div>
+          </div>
+        </div>
+        ` : `
+        <div class="git-panel">
+          <div class="git-panel-header">
+            <h3>Pull Request</h3>
+          </div>
+          <div class="git-gh-install">
+            <p class="git-empty-sm">The <code>gh</code> CLI is required to create PRs.</p>
+            <div class="git-gh-install-cmds">
+              <div class="git-gh-cmd"><span class="git-gh-os">macOS</span><code>brew install gh && gh auth login</code></div>
+              <div class="git-gh-cmd"><span class="git-gh-os">Linux</span><code>sudo apt install gh && gh auth login</code></div>
+              <div class="git-gh-cmd"><span class="git-gh-os">Windows</span><code>winget install GitHub.cli && gh auth login</code></div>
+            </div>
+            <p class="git-empty-sm" style="margin-top:8px">After installing, restart the app or <a href="#" id="btn-gh-install-info" class="git-link">visit cli.github.com</a></p>
+          </div>
+        </div>
+        `}
+      </div>
+    `;
+
+    // Restore conventional commit field visibility
+    const convToggle = document.getElementById('git-conventional-toggle');
+    const convFields = document.getElementById('git-conv-fields');
+    if (convToggle && convFields) {
+      convToggle.addEventListener('change', () => {
+        convFields.classList.toggle('hidden', !convToggle.checked);
+      });
+    }
+  } catch (err) {
+    container.innerHTML = `<p class="git-empty">Failed to load git data: ${err.message}</p>`;
+  }
+}
+
+/** Build the final commit message, applying conventional commit prefix if enabled. */
+function buildCommitMessage() {
+  const msg = document.getElementById('git-commit-message')?.value?.trim();
+  if (!msg) return '';
+  const convToggle = document.getElementById('git-conventional-toggle');
+  if (!convToggle || !convToggle.checked) return msg;
+  const type = document.getElementById('git-conv-type')?.value || 'feat';
+  const scope = document.getElementById('git-conv-scope')?.value?.trim();
+  const prefix = scope ? `${type}(${scope}): ` : `${type}: `;
+  // Don't double-prefix
+  if (msg.startsWith(prefix) || msg.match(/^\w+(\(.+\))?: /)) return msg;
+  return prefix + msg;
+}
+
+// ── Git Drag & Drop Merge ───────────────────────────────────────────────
+
+function setupBranchDragDrop(container, currentBranch) {
+  // Drag start
+  container.addEventListener('dragstart', (e) => {
+    const el = e.target.closest('[data-drag-branch]');
+    if (!el) return;
+    e.dataTransfer.setData('text/plain', el.dataset.dragBranch);
+    e.dataTransfer.effectAllowed = 'move';
+    el.classList.add('git-dragging');
+  });
+
+  container.addEventListener('dragend', (e) => {
+    const el = e.target.closest('[data-drag-branch]');
+    if (el) el.classList.remove('git-dragging');
+    // Remove all drop highlights
+    container.querySelectorAll('.git-drop-hover').forEach(el => el.classList.remove('git-drop-hover'));
+  });
+
+  // Drop target = current branch (HEAD)
+  const dropTarget = container.querySelector('.git-merge-drop-target');
+  if (!dropTarget) return;
+
+  dropTarget.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    dropTarget.classList.add('git-drop-hover');
+  });
+
+  dropTarget.addEventListener('dragleave', () => {
+    dropTarget.classList.remove('git-drop-hover');
+  });
+
+  dropTarget.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropTarget.classList.remove('git-drop-hover');
+    const branch = e.dataTransfer.getData('text/plain');
+    if (!branch || branch === currentBranch) return;
+    if (!confirm(`Merge "${branch}" into "${currentBranch}"?`)) return;
+    await performMerge(branch, currentBranch);
+  });
+}
+
+async function performMerge(branch, currentBranch) {
+  try {
+    const result = await window.api.gitMerge(branch);
+    if (result.success) {
+      showToast(`Merged ${branch} into ${currentBranch}`, 'success');
+    } else if (result.conflicts && result.conflicts.length > 0) {
+      showToast(`Merge conflicts in ${result.conflicts.length} file(s)`, 'warning');
+    } else {
+      showToast(`Merge failed: ${result.message || 'unknown error'}`, 'error');
+    }
+    renderGitView();
+  } catch (err) {
+    showToast(`Merge failed: ${err.message}`, 'error');
+  }
+}
+
+// ── Git Context Menu ────────────────────────────────────────────────────
+
+let gitContextMenu = null;
+
+function showGitContextMenu(x, y, branch, currentBranch) {
+  removeGitContextMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'git-context-menu';
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+
+  const isCurrentBranch = branch === currentBranch;
+  const isRemote = branch.includes('/');
+  const items = [];
+
+  if (!isCurrentBranch) {
+    items.push({ label: `Checkout ${branch}`, action: 'checkout' });
+    items.push({ label: `Merge ${branch} into ${currentBranch}`, action: 'merge' });
+    items.push({ label: `Rebase ${currentBranch} onto ${branch}`, action: 'rebase' });
+    if (isRemote) {
+      items.push({ label: `Delete remote branch`, action: 'delete-remote', cls: 'danger' });
+    } else {
+      items.push({ label: `Delete branch`, action: 'delete', cls: 'danger' });
+    }
+  }
+
+  menu.innerHTML = items.map(item =>
+    `<div class="git-context-menu-item${item.cls ? ` git-context-menu-${item.cls}` : ''}" data-action="${item.action}">${item.label}</div>`
+  ).join('');
+
+  if (items.length === 0) {
+    menu.innerHTML = '<div class="git-context-menu-item disabled">No actions</div>';
+  }
+
+  document.body.appendChild(menu);
+  gitContextMenu = menu;
+
+  // Position adjustment if off-screen
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+
+  menu.addEventListener('click', async (e) => {
+    const item = e.target.closest('[data-action]');
+    if (!item) return;
+    removeGitContextMenu();
+
+    if (item.dataset.action === 'checkout') {
+      try {
+        await window.api.gitCheckout(branch);
+        showToast(`Switched to ${branch}`, 'success');
+        renderGitView();
+      } catch (err) {
+        showToast(`Checkout failed: ${err.message}`, 'error');
+      }
+    } else if (item.dataset.action === 'merge') {
+      if (!confirm(`Merge "${branch}" into "${currentBranch}"?`)) return;
+      await performMerge(branch, currentBranch);
+    } else if (item.dataset.action === 'delete') {
+      if (!confirm(`Delete local branch "${branch}"?`)) return;
+      try {
+        await window.api.gitDeleteBranch(branch);
+        showToast(`Branch ${branch} deleted`, 'success');
+        renderGitView();
+      } catch (err) {
+        // Offer force delete for unmerged branches
+        if (err.message && err.message.includes('not fully merged')) {
+          if (confirm(`Branch "${branch}" is not fully merged. Force delete?`)) {
+            try {
+              await window.api.gitDeleteBranch(branch, true);
+              showToast(`Branch ${branch} force deleted`, 'success');
+              renderGitView();
+            } catch (err2) {
+              showToast(`Delete failed: ${err2.message}`, 'error');
+            }
+          }
+        } else {
+          showToast(`Delete failed: ${err.message}`, 'error');
+        }
+      }
+    } else if (item.dataset.action === 'rebase') {
+      if (!confirm(`Rebase "${currentBranch}" onto "${branch}"?`)) return;
+      try {
+        const result = await window.api.gitRebase(branch);
+        if (result.success) {
+          showToast(`Rebased onto ${branch}`, 'success');
+        } else {
+          showToast(`Rebase conflicts: ${result.conflicts.length} file(s)`, 'warning');
+        }
+        renderGitView();
+      } catch (err) {
+        showToast(`Rebase failed: ${err.message}`, 'error');
+      }
+    } else if (item.dataset.action === 'delete-remote') {
+      if (!confirm(`Delete remote branch "${branch}"? This cannot be undone.`)) return;
+      try {
+        await window.api.gitDeleteRemoteBranch(branch);
+        showToast(`Remote branch ${branch} deleted`, 'success');
+        renderGitView();
+      } catch (err) {
+        showToast(`Delete remote failed: ${err.message}`, 'error');
+      }
+    }
+  });
+
+  // Close on click outside
+  setTimeout(() => {
+    document.addEventListener('click', removeGitContextMenu, { once: true });
+  }, 0);
+}
+
+function removeGitContextMenu() {
+  if (gitContextMenu) {
+    gitContextMenu.remove();
+    gitContextMenu = null;
+  }
+}
+
+// Right-click on branch
+document.addEventListener('contextmenu', (e) => {
+  const branchEl = e.target.closest('[data-context-branch]');
+  if (!branchEl) return;
+  e.preventDefault();
+  const branch = branchEl.dataset.contextBranch;
+  // Find current branch from the HEAD-tagged item
+  const headItem = document.querySelector('.git-sidebar-branch-current [data-context-branch]') ||
+                   document.querySelector('.git-sidebar-branch-current');
+  const currentBranch = headItem?.dataset?.contextBranch || '';
+  showGitContextMenu(e.clientX, e.clientY, branch, currentBranch);
+});
+
+// ── Git View Event Handlers ─────────────────────────────────────────────
+
+document.addEventListener('click', async (e) => {
+  // Refresh
+  if (e.target.id === 'btn-git-refresh' || e.target.closest('#btn-git-refresh')) {
+    renderGitView();
+    return;
+  }
+
+  // Resolve merge conflicts with LLM
+  if (e.target.id === 'btn-git-resolve-llm' || e.target.closest('#btn-git-resolve-llm')) {
+    try {
+      const status = await window.api.gitStatus();
+      const conflictFiles = status.conflicted || [];
+      const fileList = conflictFiles.join(', ');
+      const prompt = `There are merge conflicts in the following files: ${fileList}. Please help me resolve these merge conflicts. Look at each file, understand both sides of the conflict, and resolve them appropriately.`;
+      window.sendToTerminal(prompt, { returnToGitView: true });
+      showView('terminal');
+    } catch (err) {
+      showToast(`Failed to start LLM: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Abort merge
+  if (e.target.id === 'btn-git-abort-merge' || e.target.closest('#btn-git-abort-merge')) {
+    if (!confirm('Abort the current merge?')) return;
+    try {
+      await window.api.gitAbortMerge();
+      showToast('Merge aborted', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Abort failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Fetch
+  if (e.target.id === 'btn-git-fetch' || e.target.closest('#btn-git-fetch')) {
+    const btn = document.getElementById('btn-git-fetch');
+    gitBtnLoading(btn, 'Fetch');
+    try {
+      await window.api.gitFetch();
+      showToast('Fetch complete', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Fetch failed: ${err.message}`, 'error');
+      gitBtnDone(btn, 'Fetch');
+    }
+    return;
+  }
+
+  // Pull
+  if (e.target.id === 'btn-git-pull' || e.target.closest('#btn-git-pull')) {
+    const btn = document.getElementById('btn-git-pull');
+    if (btn.disabled) return;
+    gitBtnLoading(btn, 'Pull');
+    try {
+      const result = await window.api.gitPull();
+      const count = result.summary?.changes ?? 0;
+      showToast(`Pull complete (${count} change${count !== 1 ? 's' : ''})`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Pull failed: ${err.message}`, 'error');
+      gitBtnDone(btn, 'Pull');
+    }
+    return;
+  }
+
+  // Push
+  if (e.target.id === 'btn-git-push' || e.target.closest('#btn-git-push')) {
+    const btn = document.getElementById('btn-git-push');
+    if (btn.disabled) return;
+    gitBtnLoading(btn, 'Push');
+    try {
+      await window.api.gitPush();
+      showToast('Push complete', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Push failed: ${err.message}`, 'error');
+      gitBtnDone(btn, 'Push');
+    }
+    return;
+  }
+
+  // Stage file (checkbox unchecked→checked, or row click)
+  const stageCheck = e.target.closest('.git-file-unstaged');
+  if (stageCheck) {
+    const file = stageCheck.dataset.stageFile;
+    if (file) {
+      try {
+        await window.api.gitStage([file]);
+        renderGitView();
+      } catch (err) {
+        showToast(`Stage failed: ${err.message}`, 'error');
+      }
+    }
+    return;
+  }
+
+  // Unstage file (checkbox checked→unchecked, or row click)
+  const unstageCheck = e.target.closest('.git-file-staged');
+  if (unstageCheck) {
+    const file = unstageCheck.dataset.unstageFile;
+    if (file) {
+      try {
+        await window.api.gitUnstage([file]);
+        renderGitView();
+      } catch (err) {
+        showToast(`Unstage failed: ${err.message}`, 'error');
+      }
+    }
+    return;
+  }
+
+  // Stage all
+  if (e.target.id === 'btn-git-stage-all' || e.target.closest('#btn-git-stage-all')) {
+    try {
+      await window.api.gitStageAll();
+      renderGitView();
+    } catch (err) {
+      showToast(`Stage all failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Commit
+  if (e.target.id === 'btn-git-commit' || e.target.closest('#btn-git-commit')) {
+    const isAmend = document.getElementById('git-amend-toggle')?.checked;
+    const message = buildCommitMessage();
+    if (!message && !isAmend) {
+      showToast('Please enter a commit message', 'warning');
+      return;
+    }
+    const btn = document.getElementById('btn-git-commit');
+    btn.disabled = true;
+    btn.textContent = isAmend ? 'Amending...' : 'Committing...';
+    try {
+      let result;
+      if (isAmend) {
+        result = await window.api.gitAmend(message || undefined);
+        showToast(`Amended ${result.hash?.substring(0, 7) || ''}`, 'success');
+      } else {
+        result = await window.api.gitCommit(message);
+        showToast(`Committed ${result.hash?.substring(0, 7) || ''}`, 'success');
+      }
+      renderGitView();
+    } catch (err) {
+      showToast(`${isAmend ? 'Amend' : 'Commit'} failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Commit';
+    }
+    return;
+  }
+
+  // Generate commit message with LLM
+  if (e.target.id === 'btn-git-generate-msg' || e.target.closest('#btn-git-generate-msg')) {
+    const btn = document.getElementById('btn-git-generate-msg');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    try {
+      const diff = await window.api.gitDiff();
+      const diffText = (diff.staged || diff.unstaged || '').substring(0, 4000);
+      if (!diffText.trim()) {
+        showToast('No diff available to generate message from', 'warning');
+        btn.disabled = false;
+        btn.textContent = 'Generate Message';
+        return;
+      }
+      // Build a simple summary from the diff stat
+      const lines = diffText.split('\n').filter(l => l.trim());
+      const summary = lines.slice(0, 20).join('\n');
+      const textarea = document.getElementById('git-commit-message');
+      if (textarea) {
+        textarea.value = summary;
+        textarea.focus();
+      }
+      showToast('Diff summary inserted — edit as needed', 'success');
+    } catch (err) {
+      showToast(`Generate failed: ${err.message}`, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Generate Message';
+    return;
+  }
+
+  // ── Tag actions ──
+
+  // New tag form toggle
+  if (e.target.id === 'btn-git-new-tag' || e.target.closest('#btn-git-new-tag')) {
+    const form = document.getElementById('git-new-tag-form');
+    if (form) form.classList.toggle('hidden');
+    return;
+  }
+
+  // Cancel new tag
+  if (e.target.id === 'btn-git-cancel-tag' || e.target.closest('#btn-git-cancel-tag')) {
+    const form = document.getElementById('git-new-tag-form');
+    if (form) form.classList.add('hidden');
+    return;
+  }
+
+  // Create tag
+  if (e.target.id === 'btn-git-create-tag' || e.target.closest('#btn-git-create-tag')) {
+    const name = document.getElementById('git-tag-name')?.value?.trim();
+    const message = document.getElementById('git-tag-message')?.value?.trim();
+    if (!name) {
+      showToast('Tag name is required', 'warning');
+      return;
+    }
+    try {
+      await window.api.gitCreateTag(name, message || undefined);
+      showToast(`Tag ${name} created`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Create tag failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Push single tag
+  const pushTagBtn = e.target.closest('[data-push-tag]');
+  if (pushTagBtn) {
+    const name = pushTagBtn.dataset.pushTag;
+    pushTagBtn.disabled = true;
+    pushTagBtn.textContent = '...';
+    try {
+      await window.api.gitPushTag(name);
+      showToast(`Tag ${name} pushed`, 'success');
+    } catch (err) {
+      showToast(`Push tag failed: ${err.message}`, 'error');
+    }
+    pushTagBtn.disabled = false;
+    pushTagBtn.textContent = 'Push';
+    return;
+  }
+
+  // Delete tag
+  const deleteTagBtn = e.target.closest('[data-delete-tag]');
+  if (deleteTagBtn) {
+    const name = deleteTagBtn.dataset.deleteTag;
+    if (!confirm(`Delete tag "${name}"?`)) return;
+    try {
+      await window.api.gitDeleteTag(name);
+      showToast(`Tag ${name} deleted`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Delete tag failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Push all tags
+  if (e.target.id === 'btn-git-push-all-tags' || e.target.closest('#btn-git-push-all-tags')) {
+    const btn = document.getElementById('btn-git-push-all-tags');
+    btn.disabled = true;
+    btn.textContent = 'Pushing...';
+    try {
+      await window.api.gitPushAllTags();
+      showToast('All tags pushed', 'success');
+    } catch (err) {
+      showToast(`Push all tags failed: ${err.message}`, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Push All';
+    return;
+  }
+
+  // Create Pull Request
+  if (e.target.id === 'btn-git-create-pr' || e.target.closest('#btn-git-create-pr')) {
+    const title = document.getElementById('git-pr-title')?.value?.trim();
+    const body = document.getElementById('git-pr-body')?.value?.trim();
+    const isDraft = document.getElementById('git-pr-draft')?.checked;
+    const base = document.getElementById('git-pr-base')?.value;
+
+    let cmd = 'gh pr create';
+    if (title) cmd += ` --title "${title.replace(/"/g, '\\"')}"`;
+    if (body) cmd += ` --body "${body.replace(/"/g, '\\"')}"`;
+    if (isDraft) cmd += ' --draft';
+    if (base) cmd += ` --base ${base}`;
+    if (!title) cmd += ' --fill';
+
+    // Show terminal and run the command
+    window.sendToTerminal(cmd, { returnToGitView: true });
+    return;
+  }
+
+  // gh CLI install info
+  if (e.target.id === 'btn-gh-install-info' || e.target.closest('#btn-gh-install-info')) {
+    e.preventDefault();
+    window.api.openExternal('https://cli.github.com/');
+    return;
+  }
+
+  // New branch form toggle
+  if (e.target.id === 'btn-git-new-branch' || e.target.closest('#btn-git-new-branch')) {
+    const form = document.getElementById('git-new-branch-form');
+    if (form) form.classList.toggle('hidden');
+    return;
+  }
+
+  // Cancel new branch
+  if (e.target.id === 'btn-git-cancel-branch' || e.target.closest('#btn-git-cancel-branch')) {
+    const form = document.getElementById('git-new-branch-form');
+    if (form) form.classList.add('hidden');
+    return;
+  }
+
+  // Create branch
+  if (e.target.id === 'btn-git-create-branch' || e.target.closest('#btn-git-create-branch')) {
+    const prefix = document.getElementById('git-branch-prefix')?.value || '';
+    const name = document.getElementById('git-branch-name')?.value?.trim();
+    const startPoint = document.getElementById('git-branch-start')?.value;
+    if (!name) {
+      showToast('Branch name is required', 'warning');
+      return;
+    }
+    const fullName = prefix + name;
+    try {
+      await window.api.gitCreateBranch(fullName, startPoint || undefined);
+      showToast(`Branch ${fullName} created and checked out`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Create branch failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Checkout local branch
+  const localItem = e.target.closest('[data-branch]');
+  if (localItem) {
+    const branch = localItem.dataset.branch;
+    if (!confirm(`Checkout branch "${branch}"?`)) return;
+    try {
+      await window.api.gitCheckout(branch);
+      showToast(`Switched to ${branch}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Checkout failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Checkout remote branch (creates local tracking branch)
+  const remoteItem = e.target.closest('[data-remote-branch]');
+  if (remoteItem) {
+    const remoteBranch = remoteItem.dataset.remoteBranch;
+    const localName = remoteBranch.replace(/^[^/]+\//, '');
+    if (!confirm(`Checkout remote branch "${remoteBranch}" as local "${localName}"?`)) return;
+    try {
+      await window.api.gitCheckout(localName);
+      showToast(`Switched to ${localName}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Checkout failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Stash ──
+  if (e.target.id === 'btn-git-stash' || e.target.closest('#btn-git-stash')) {
+    const message = prompt('Stash message (optional):');
+    if (message === null) return; // cancelled
+    try {
+      await window.api.gitStash(message || undefined);
+      showToast('Changes stashed', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Stash failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  const popBtn = e.target.closest('[data-stash-pop]');
+  if (popBtn) {
+    const index = parseInt(popBtn.dataset.stashPop);
+    try {
+      await window.api.gitStashPop(index);
+      showToast('Stash popped', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Stash pop failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  const dropBtn = e.target.closest('[data-stash-drop]');
+  if (dropBtn) {
+    const index = parseInt(dropBtn.dataset.stashDrop);
+    if (!confirm(`Drop stash@{${index}}?`)) return;
+    try {
+      await window.api.gitStashDrop(index);
+      showToast('Stash dropped', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Stash drop failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Inline Diff Viewer ──
+  const diffTarget = e.target.closest('[data-diff-file]');
+  if (diffTarget && !e.target.classList.contains('git-file-check')) {
+    const file = diffTarget.dataset.diffFile;
+    const staged = diffTarget.dataset.diffStaged === 'true';
+    const viewer = document.getElementById('git-diff-viewer');
+    if (!viewer) return;
+
+    // Toggle off if already showing this file
+    if (viewer.dataset.currentFile === file && !viewer.classList.contains('hidden')) {
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      return;
+    }
+
+    viewer.innerHTML = '<p class="git-loading">Loading diff...</p>';
+    viewer.classList.remove('hidden');
+    viewer.dataset.currentFile = file;
+
+    try {
+      const diff = await window.api.gitDiffFile(file, staged);
+      if (!diff.trim()) {
+        viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs" id="btn-close-diff">&times;</button></div><p class="git-empty-sm">No diff available (new untracked file)</p>`;
+      } else {
+        viewer.innerHTML = `<div class="git-diff-header"><span>${file} ${staged ? '(staged)' : ''}</span><button class="btn btn-ghost btn-xs" id="btn-close-diff">&times;</button></div><pre class="git-diff-content">${formatDiff(diff)}</pre>`;
+      }
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs" id="btn-close-diff">&times;</button></div><p class="git-empty-sm">Could not load diff</p>`;
+    }
+    return;
+  }
+
+  // Close diff viewer
+  if (e.target.id === 'btn-close-diff' || e.target.closest('#btn-close-diff')) {
+    const viewer = document.getElementById('git-diff-viewer');
+    if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
+    return;
+  }
+
+  // ── Commit Detail ──
+  const commitItem = e.target.closest('[data-show-commit]');
+  if (commitItem) {
+    const hash = commitItem.dataset.showCommit;
+    const detail = document.getElementById('git-commit-detail');
+    if (!detail) return;
+
+    // Toggle off if already showing this commit
+    if (detail.dataset.currentHash === hash && !detail.classList.contains('hidden')) {
+      detail.classList.add('hidden');
+      detail.dataset.currentHash = '';
+      return;
+    }
+
+    detail.innerHTML = '<p class="git-loading">Loading commit...</p>';
+    detail.classList.remove('hidden');
+    detail.dataset.currentHash = hash;
+
+    try {
+      const info = await window.api.gitShowCommit(hash);
+      const filesHtml = info.files.map(f => {
+        const statusCls = { A: 'a', M: 'm', D: 'd', R: 'r' }[f.status] || '';
+        return `<div class="git-commit-file-item" data-commit-file-diff="${hash}" data-commit-file="${f.path}">
+          <span class="git-file-status git-file-status-${statusCls}">${f.status}</span>
+          <span class="git-file-name">${f.path}</span>
+          <button class="btn btn-ghost btn-xs git-file-history-btn" data-file-history="${f.path}" title="File history">&circlearrowleft;</button>
+        </div>`;
+      }).join('');
+
+      detail.innerHTML = `
+        <div class="git-commit-detail-header">
+          <button class="btn btn-ghost btn-xs" id="btn-close-commit-detail">&times;</button>
+          <strong>${info.subject}</strong>
+          <div class="git-commit-detail-meta">${info.hashShort} &middot; ${info.author} &middot; ${info.date}</div>
+          ${info.body ? `<pre class="git-commit-detail-body">${info.body}</pre>` : ''}
+          <div class="git-commit-detail-actions">
+            <button class="btn btn-ghost btn-xs" data-revert-commit="${hash}" title="Create a new commit that undoes this one">Revert</button>
+          </div>
+        </div>
+        <div class="git-commit-detail-files">${filesHtml}</div>
+        <div id="git-commit-file-diff-viewer" class="git-diff-viewer hidden"></div>
+      `;
+    } catch (err) {
+      detail.innerHTML = `<p class="git-empty-sm">Could not load commit: ${err.message}</p>`;
+    }
+    return;
+  }
+
+  // Close commit detail
+  if (e.target.id === 'btn-close-commit-detail' || e.target.closest('#btn-close-commit-detail')) {
+    const detail = document.getElementById('git-commit-detail');
+    if (detail) { detail.classList.add('hidden'); detail.dataset.currentHash = ''; }
+    return;
+  }
+
+  // Commit file diff
+  const commitFileDiffEl = e.target.closest('[data-commit-file-diff]');
+  if (commitFileDiffEl) {
+    const hash = commitFileDiffEl.dataset.commitFileDiff;
+    const file = commitFileDiffEl.dataset.commitFile;
+    const viewer = document.getElementById('git-commit-file-diff-viewer');
+    if (!viewer) return;
+
+    if (viewer.dataset.currentFile === file && !viewer.classList.contains('hidden')) {
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      return;
+    }
+
+    viewer.innerHTML = '<p class="git-loading">Loading diff...</p>';
+    viewer.classList.remove('hidden');
+    viewer.dataset.currentFile = file;
+
+    try {
+      const diff = await window.api.gitCommitFileDiff(hash, file);
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><pre class="git-diff-content">${formatDiff(diff)}</pre>`;
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">Could not load diff</p>`;
+    }
+    return;
+  }
+
+  // Close commit file diff
+  if (e.target.classList.contains('btn-close-commit-file-diff') || e.target.closest('.btn-close-commit-file-diff')) {
+    const viewer = document.getElementById('git-commit-file-diff-viewer');
+    if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
+    return;
+  }
+
+  // ── Discard ──
+  const discardBtn = e.target.closest('[data-discard-file]');
+  if (discardBtn) {
+    const file = discardBtn.dataset.discardFile;
+    if (!confirm(`Discard changes in "${file}"?`)) return;
+    try {
+      await window.api.gitDiscardFile(file);
+      showToast(`Discarded changes in ${file}`, 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Discard failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  if (e.target.id === 'btn-git-discard-all' || e.target.closest('#btn-git-discard-all')) {
+    if (!confirm('Discard ALL local changes? This cannot be undone.')) return;
+    try {
+      await window.api.gitDiscardAll();
+      showToast('All changes discarded', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Discard all failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Revert Commit ──
+  const revertBtn = e.target.closest('[data-revert-commit]');
+  if (revertBtn) {
+    const hash = revertBtn.dataset.revertCommit;
+    if (!confirm(`Revert commit ${hash.substring(0, 7)}? This will create a new commit.`)) return;
+    try {
+      await window.api.gitRevert(hash);
+      showToast('Commit reverted', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Revert failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── Rebase Controls ──
+  if (e.target.id === 'btn-git-rebase-continue' || e.target.closest('#btn-git-rebase-continue')) {
+    try {
+      await window.api.gitRebaseContinue();
+      showToast('Rebase continued', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Rebase continue failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  if (e.target.id === 'btn-git-rebase-abort' || e.target.closest('#btn-git-rebase-abort')) {
+    try {
+      await window.api.gitRebaseAbort();
+      showToast('Rebase aborted', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Rebase abort failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── File History ──
+  const fileHistoryBtn = e.target.closest('[data-file-history]');
+  if (fileHistoryBtn) {
+    e.stopPropagation();
+    const file = fileHistoryBtn.dataset.fileHistory;
+    const viewer = document.getElementById('git-commit-file-diff-viewer') || document.getElementById('git-diff-viewer');
+    if (!viewer) return;
+
+    viewer.innerHTML = '<p class="git-loading">Loading file history...</p>';
+    viewer.classList.remove('hidden');
+
+    try {
+      const history = await window.api.gitFileLog(file, 20);
+      if (history.length === 0) {
+        viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">No history found</p>`;
+      } else {
+        const historyHtml = history.map(c => `
+          <div class="git-commit-item git-commit-clickable" data-show-commit="${c.hash}">
+            <span class="git-commit-hash">${c.hashShort}</span>
+            <span class="git-commit-message">${c.message}</span>
+            <span class="git-commit-meta">${c.author} &middot; ${formatTimeAgo(c.date)}</span>
+          </div>
+        `).join('');
+        viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file} (${history.length} commits)</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><div class="git-commit-list">${historyHtml}</div>`;
+      }
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>History: ${file}</span><button class="btn btn-ghost btn-xs btn-close-commit-file-diff">&times;</button></div><p class="git-empty-sm">Could not load history</p>`;
+    }
+    return;
+  }
+
+  // ── Conflict Viewer ──
+  const conflictFileEl = e.target.closest('[data-conflict-file]');
+  if (conflictFileEl && !conflictFileEl.closest('.git-conflict-save')) {
+    const file = conflictFileEl.dataset.conflictFile;
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer) return;
+
+    // Toggle off if already showing
+    if (viewer.dataset.currentFile === file && !viewer.classList.contains('hidden')) {
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      return;
+    }
+
+    viewer.innerHTML = '<div class="git-loading"><span class="git-spinner"></span> Loading conflict...</div>';
+    viewer.classList.remove('hidden');
+    viewer.dataset.currentFile = file;
+
+    try {
+      const content = await window.api.gitReadConflictFile(file);
+      const blocks = parseConflicts(content);
+      viewer.innerHTML = renderConflictViewer(file, blocks);
+      // Store blocks and original content for resolution
+      viewer._blocks = blocks;
+      viewer._fileName = file;
+      viewer._resolutions = {};
+    } catch (err) {
+      viewer.innerHTML = `<div class="git-diff-header"><span>${file}</span><button class="btn btn-ghost btn-xs" id="btn-close-conflict">&times;</button></div><p class="git-empty-sm">Could not load file: ${err.message}</p>`;
+    }
+    return;
+  }
+
+  // Close conflict viewer
+  if (e.target.id === 'btn-close-conflict' || e.target.closest('#btn-close-conflict')) {
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (viewer) { viewer.classList.add('hidden'); viewer.dataset.currentFile = ''; }
+    return;
+  }
+
+  // Resolve single conflict block
+  const resolveBtn = e.target.closest('[data-resolve-block]');
+  if (resolveBtn) {
+    const index = parseInt(resolveBtn.dataset.resolveBlock);
+    const choice = resolveBtn.dataset.resolveChoice;
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer || !viewer._blocks) return;
+
+    viewer._resolutions[index] = choice;
+
+    // Visual feedback — highlight chosen, dim the block
+    const block = viewer.querySelector(`[data-conflict-index="${index}"]`);
+    if (block) {
+      block.classList.add('git-conflict-resolved');
+      block.dataset.resolvedChoice = choice;
+      // Update button states
+      block.querySelectorAll('[data-resolve-block]').forEach(b => {
+        b.classList.toggle('git-conflict-btn-active', b.dataset.resolveChoice === choice);
+      });
+    }
+    return;
+  }
+
+  // Accept all ours/theirs
+  const acceptAllBtn = e.target.closest('[data-conflict-accept-all]');
+  if (acceptAllBtn) {
+    const choice = acceptAllBtn.dataset.conflictAcceptAll;
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer || !viewer._blocks) return;
+
+    viewer._blocks.forEach((block, i) => {
+      if (block.type === 'conflict') {
+        viewer._resolutions[i] = choice;
+        const el = viewer.querySelector(`[data-conflict-index="${i}"]`);
+        if (el) {
+          el.classList.add('git-conflict-resolved');
+          el.dataset.resolvedChoice = choice;
+          el.querySelectorAll('[data-resolve-block]').forEach(b => {
+            b.classList.toggle('git-conflict-btn-active', b.dataset.resolveChoice === choice);
+          });
+        }
+      }
+    });
+    showToast(`All conflicts set to "${choice}"`, 'info');
+    return;
+  }
+
+  // Save resolved conflict
+  if (e.target.id === 'btn-git-save-conflict' || e.target.closest('#btn-git-save-conflict')) {
+    const viewer = document.getElementById('git-conflict-viewer');
+    if (!viewer || !viewer._blocks) return;
+
+    // Check all conflicts are resolved
+    const conflictBlocks = viewer._blocks.map((b, i) => ({ ...b, index: i })).filter(b => b.type === 'conflict');
+    const unresolved = conflictBlocks.filter(b => !viewer._resolutions[b.index]);
+    if (unresolved.length > 0) {
+      showToast(`${unresolved.length} conflict(s) not yet resolved`, 'warning');
+      return;
+    }
+
+    // Build resolved content
+    const resolved = viewer._blocks.map((block, i) => {
+      if (block.type === 'clean') return block.content;
+      const choice = viewer._resolutions[i];
+      if (choice === 'ours') return block.ours;
+      if (choice === 'theirs') return block.theirs;
+      if (choice === 'both') return block.ours + '\n' + block.theirs;
+      return block.ours; // fallback
+    }).join('\n');
+
+    const file = viewer._fileName;
+    try {
+      await window.api.gitResolveConflict(file, resolved);
+      showToast(`${file} resolved and staged`, 'success');
+      viewer.classList.add('hidden');
+      viewer.dataset.currentFile = '';
+      renderGitView();
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+});
 
 // ── Toast Notifications ─────────────────────────────────────────────────
 
@@ -420,17 +1973,24 @@ function showView(view) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
   // Terminal-only mode: hide top pane + handle, let bottom fill the space
+  // Full-content mode (git, settings): hide bottom pane + handle, let top fill
   const splitTop = document.getElementById('split-top');
   const splitHandle = document.getElementById('split-handle');
   const splitBottom = document.getElementById('split-bottom');
+  const hideTerminal = view === 'git' || view === 'settings';
+
   if (view === 'terminal') {
     if (splitTop) splitTop.style.display = 'none';
     if (splitHandle) splitHandle.style.display = 'none';
-    if (splitBottom) splitBottom.style.flex = '1';
+    if (splitBottom) { splitBottom.style.flex = '1'; splitBottom.style.display = ''; }
+  } else if (hideTerminal) {
+    if (splitTop) { splitTop.style.display = ''; splitTop.style.flex = '1'; }
+    if (splitHandle) splitHandle.style.display = 'none';
+    if (splitBottom) splitBottom.style.display = 'none';
   } else {
-    if (splitTop) splitTop.style.display = '';
+    if (splitTop) { splitTop.style.display = ''; splitTop.style.flex = ''; }
     if (splitHandle) splitHandle.style.display = '';
-    if (splitBottom) splitBottom.style.flex = '';
+    if (splitBottom) { splitBottom.style.flex = ''; splitBottom.style.display = ''; }
   }
 
   switch (view) {
@@ -461,6 +2021,11 @@ function showView(view) {
       document.querySelector('[data-view="history"]')?.classList.add('active');
       document.getElementById('view-history')?.classList.add('active');
       if (typeof window.renderSessionHistory === 'function') window.renderSessionHistory();
+      break;
+    case 'git':
+      document.querySelector('[data-view="git"]')?.classList.add('active');
+      document.getElementById('view-git')?.classList.add('active');
+      renderGitView();
       break;
     case 'settings':
       document.querySelector('[data-view="settings"]')?.classList.add('active');
@@ -1325,11 +2890,13 @@ function setupProjectSelector() {
       projectData = data;
       snapshotStoryStates();
       await refreshProjectList();
+      await detectGitRepo();
       showView('epics');
       startPhasePoller();
     } else {
       projectData = null;
       stopPhasePoller();
+      await detectGitRepo();
       showView('welcome');
       showWarning('Could not load project — BMAD files not found.');
     }
@@ -1359,6 +2926,7 @@ function setupInlineProjectSelect(selectId) {
       projectData = data;
       snapshotStoryStates();
       await refreshProjectList();
+      await detectGitRepo();
       showView('epics');
       startPhasePoller();
     }
@@ -1585,6 +3153,33 @@ async function renderSettings() {
         <div class="settings-field">
           <label class="settings-label">Poll interval (seconds)</label>
           <input type="number" class="settings-input settings-input-sm" id="settings-notif-poll" value="${notifSettings.pollInterval || 30}" min="5" max="300" step="5">
+        </div>
+      </div>
+
+      <!-- Git -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">Git</h3>
+        <div class="settings-field">
+          <label class="settings-label">Auto-fetch interval</label>
+          <select class="settings-select" id="settings-git-auto-fetch">
+            ${[
+              { value: '0', label: 'Off' },
+              { value: '1', label: 'Every 1 minute' },
+              { value: '5', label: 'Every 5 minutes' },
+              { value: '15', label: 'Every 15 minutes' },
+              { value: '60', label: 'Every 60 minutes' }
+            ].map(o =>
+              `<option value="${o.value}" ${o.value === String(settings.git?.autoFetchInterval ?? 5) ? 'selected' : ''}>${o.label}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Merge tool</label>
+          <select class="settings-select" id="settings-git-merge-tool">
+            ${['default', 'vscode', 'webstorm', 'opendiff', 'meld', 'kdiff3', 'vimdiff'].map(t =>
+              `<option value="${t}" ${t === (settings.git?.mergeTool || 'default') ? 'selected' : ''}>${t === 'default' ? 'Default (git mergetool)' : t}</option>`
+            ).join('')}
+          </select>
         </div>
       </div>
 
@@ -2036,6 +3631,14 @@ async function saveSettingsFromForm() {
     }
   };
 
+  // Git settings
+  const mergeTool = document.getElementById('settings-git-merge-tool')?.value;
+  const autoFetchInterval = parseInt(document.getElementById('settings-git-auto-fetch')?.value ?? '5');
+  settings.git = {
+    mergeTool: mergeTool || 'default',
+    autoFetchInterval
+  };
+
   // Merge companion state from existing settings
   if (existingSettings?.companion) {
     settings.companion = existingSettings.companion;
@@ -2043,8 +3646,9 @@ async function saveSettingsFromForm() {
 
   await window.api.saveSettings(settings);
 
-  // Restart poller with new interval
+  // Restart pollers with new intervals
   startPhasePoller();
+  startGitAutoFetch();
 
   const status = document.getElementById('settings-save-status');
   if (status) {

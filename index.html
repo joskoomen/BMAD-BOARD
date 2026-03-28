@@ -35,9 +35,9 @@
           <span class="nav-icon">&#128450;</span>
           <span>Documents</span>
         </li>
-        <li class="nav-item" data-view="settings">
-          <span class="nav-icon">&#128295;</span>
-          <span>Settings</span>
+        <li class="nav-item hidden" data-view="git" id="nav-git">
+          <span class="nav-icon">&#128256;</span>
+          <span>Git</span>
         </li>
       </ul>
 
@@ -48,6 +48,16 @@
           <button id="btn-edit-quick-actions" class="sidebar-edit-btn" title="Edit quick actions">&#128397;</button>
         </div>
         <div id="bmad-action-list" class="bmad-action-list">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- Git Branches (visible when git view is active) -->
+      <div id="git-sidebar" class="sidebar-section hidden">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">Branches</div>
+        </div>
+        <div id="git-sidebar-branches">
           <!-- Rendered dynamically -->
         </div>
       </div>
@@ -105,6 +115,17 @@
 
           <!-- Documents View -->
           <div id="view-party" class="view"></div>
+
+          <!-- Git View -->
+          <div id="view-git" class="view">
+            <div class="view-header">
+              <h2>Git</h2>
+              <div class="view-actions">
+                <button class="btn btn-ghost btn-sm" id="btn-git-refresh">Refresh</button>
+              </div>
+            </div>
+            <div id="git-content" class="git-content"></div>
+          </div>
 
           <!-- Settings View -->
           <div id="view-settings" class="view">
