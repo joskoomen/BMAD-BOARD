@@ -825,6 +825,21 @@ ipcMain.handle('git:push', async (event, remote, branch) => {
   return { ok: true };
 });
 
+ipcMain.handle('git:merge', async (event, branch) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  return gm.merge(branch);
+});
+
+ipcMain.handle('git:abort-merge', async (event) => {
+  const projectPath = getWindowProjectPath(event);
+  if (!projectPath) return { error: 'No project loaded' };
+  const gm = new GitManager(projectPath);
+  await gm.abortMerge();
+  return { ok: true };
+});
+
 ipcMain.handle('git:stage', async (event, files) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };

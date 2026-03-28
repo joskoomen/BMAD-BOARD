@@ -445,3 +445,66 @@ describe('GitManager.commit', () => {
     expect(result.hash).toBe('');
   });
 });
+
+// ── merge ─────────────────────────────────────────────────────────────
+
+describe('GitManager.merge', () => {
+  it('merges a branch into current', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'hello');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    // Create and commit on feature branch
+    execSync('git checkout -b feature', { cwd: tmpDir, stdio: 'ignore' });
+    writeFile('feature.txt', 'feature work');
+    gitAdd(tmpDir, 'feature.txt');
+    gitCommit(tmpDir, 'feature commit');
+
+    // Switch back to main/master and merge
+    execSync('git checkout master || git checkout main', { cwd: tmpDir, stdio: 'ignore', shell: true });
+
+    const gm = new GitManager(tmpDir);
+    const result = await gm.merge('feature');
+
+    expect(result.success).toBe(true);
+
+    // Verify feature file exists after merge
+    const featureFile = fs.existsSync(path.join(tmpDir, 'feature.txt'));
+    expect(featureFile).toBe(true);
+  });
+
+  it('reports conflicts on conflicting merge', async () => {
+    gitInit(tmpDir);
+    writeFile('file.txt', 'original');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'init');
+
+    // Create conflicting changes on feature branch
+    execSync('git checkout -b conflict-branch', { cwd: tmpDir, stdio: 'ignore' });
+    writeFile('file.txt', 'conflict version A');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'conflict A');
+
+    // Go back and make conflicting change on main
+    execSync('git checkout master || git checkout main', { cwd: tmpDir, stdio: 'ignore', shell: true });
+    writeFile('file.txt', 'conflict version B');
+    gitAdd(tmpDir, 'file.txt');
+    gitCommit(tmpDir, 'conflict B');
+
+    const gm = new GitManager(tmpDir);
+    const result = await gm.merge('conflict-branch');
+
+    expect(result.success).toBe(false);
+    expect(result.conflicts.length).toBeGreaterThan(0);
+
+    // Status should show merging
+    const status = await gm.status();
+    expect(status.merging).toBe(true);
+
+    // Abort merge to clean up
+    await gm.abortMerge();
+    const statusAfter = await gm.status();
+    expect(statusAfter.merging).toBe(false);
+  });
+});

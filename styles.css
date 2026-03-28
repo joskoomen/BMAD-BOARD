@@ -1844,6 +1844,71 @@ html, body {
   font-style: italic;
 }
 
+/* Git drag & drop */
+.git-dragging {
+  opacity: 0.4;
+}
+
+.git-drop-hover {
+  background: rgba(108, 92, 231, 0.25) !important;
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* Git context menu */
+.git-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 200px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.git-context-menu-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.git-context-menu-item:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.git-context-menu-item.disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.git-context-menu-item.disabled:hover {
+  background: none;
+  color: var(--text-muted);
+}
+
+/* Git merge banner */
+.git-merge-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(253, 203, 110, 0.1);
+  border: 1px solid rgba(253, 203, 110, 0.3);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.git-merge-banner-text {
+  color: #fdcb6e;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* Git main content */
 .git-content {
   padding: 0 24px 24px;

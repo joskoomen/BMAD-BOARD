@@ -311,10 +311,15 @@ async function renderGitView() {
     }
 
     // ── Render branches in sidebar ──
+    const currentBranch = branches.current;
     const sidebarBranches = document.getElementById('git-sidebar-branches');
     if (sidebarBranches) {
       const localHtml = branches.local.map(b => `
-        <div class="git-sidebar-branch ${b.current ? 'git-sidebar-branch-current' : 'git-sidebar-branch-clickable'}" ${b.current ? '' : `data-branch="${b.name}"`} title="${b.current ? 'Current branch' : `Checkout ${b.name}`}">
+        <div class="git-sidebar-branch ${b.current ? 'git-sidebar-branch-current git-merge-drop-target' : 'git-sidebar-branch-clickable'}"
+             ${b.current ? '' : `data-branch="${b.name}"`}
+             ${!b.current ? `draggable="true" data-drag-branch="${b.name}"` : ''}
+             data-context-branch="${b.name}"
+             title="${b.current ? 'Current branch (drop here to merge)' : `Checkout ${b.name}`}">
           <span class="git-sidebar-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
           <span class="git-sidebar-branch-name">${b.name}</span>
           ${b.current ? '<span class="git-branch-tag">HEAD</span>' : ''}
@@ -325,7 +330,11 @@ async function renderGitView() {
         const localName = b.name.replace(/^[^/]+\//, '');
         const hasLocal = branches.local.some(lb => lb.name === localName);
         return `
-          <div class="git-sidebar-branch git-sidebar-branch-remote ${hasLocal ? '' : 'git-sidebar-branch-clickable'}" ${hasLocal ? '' : `data-remote-branch="${b.name}"`} title="${hasLocal ? 'Tracked locally' : `Checkout ${localName}`}">
+          <div class="git-sidebar-branch git-sidebar-branch-remote ${hasLocal ? '' : 'git-sidebar-branch-clickable'}"
+               ${hasLocal ? '' : `data-remote-branch="${b.name}"`}
+               draggable="true" data-drag-branch="${b.name}"
+               data-context-branch="${b.name}"
+               title="${hasLocal ? 'Tracked locally' : `Checkout ${localName}`}">
             <span class="git-sidebar-branch-icon">&#9675;</span>
             <span class="git-sidebar-branch-name">${b.name}</span>
           </div>
@@ -342,6 +351,9 @@ async function renderGitView() {
           ${remoteHtml}
         </div>
       `;
+
+      // Wire drag & drop for merge
+      setupBranchDragDrop(sidebarBranches, currentBranch);
     }
 
     // ── Classify files into staged / unstaged ──
@@ -430,6 +442,13 @@ async function renderGitView() {
         </div>
       </div>
 
+      ${status.merging ? `
+      <div class="git-merge-banner">
+        <span class="git-merge-banner-text">Merge in progress${status.conflicted.length > 0 ? ` — ${status.conflicted.length} conflict(s)` : ''}</span>
+        <button class="btn btn-ghost btn-sm" id="btn-git-abort-merge">Abort Merge</button>
+      </div>
+      ` : ''}
+
       <div class="git-panels">
         ${status.files.length > 0 || staged.length > 0 ? `
         <div class="git-panel">
@@ -517,12 +536,165 @@ function buildCommitMessage() {
   return prefix + msg;
 }
 
+// ── Git Drag & Drop Merge ───────────────────────────────────────────────
+
+function setupBranchDragDrop(container, currentBranch) {
+  // Drag start
+  container.addEventListener('dragstart', (e) => {
+    const el = e.target.closest('[data-drag-branch]');
+    if (!el) return;
+    e.dataTransfer.setData('text/plain', el.dataset.dragBranch);
+    e.dataTransfer.effectAllowed = 'move';
+    el.classList.add('git-dragging');
+  });
+
+  container.addEventListener('dragend', (e) => {
+    const el = e.target.closest('[data-drag-branch]');
+    if (el) el.classList.remove('git-dragging');
+    // Remove all drop highlights
+    container.querySelectorAll('.git-drop-hover').forEach(el => el.classList.remove('git-drop-hover'));
+  });
+
+  // Drop target = current branch (HEAD)
+  const dropTarget = container.querySelector('.git-merge-drop-target');
+  if (!dropTarget) return;
+
+  dropTarget.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    dropTarget.classList.add('git-drop-hover');
+  });
+
+  dropTarget.addEventListener('dragleave', () => {
+    dropTarget.classList.remove('git-drop-hover');
+  });
+
+  dropTarget.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropTarget.classList.remove('git-drop-hover');
+    const branch = e.dataTransfer.getData('text/plain');
+    if (!branch || branch === currentBranch) return;
+    if (!confirm(`Merge "${branch}" into "${currentBranch}"?`)) return;
+    await performMerge(branch, currentBranch);
+  });
+}
+
+async function performMerge(branch, currentBranch) {
+  try {
+    const result = await window.api.gitMerge(branch);
+    if (result.success) {
+      showToast(`Merged ${branch} into ${currentBranch}`, 'success');
+    } else if (result.conflicts && result.conflicts.length > 0) {
+      showToast(`Merge conflicts in ${result.conflicts.length} file(s)`, 'warning');
+    } else {
+      showToast(`Merge failed: ${result.message || 'unknown error'}`, 'error');
+    }
+    renderGitView();
+  } catch (err) {
+    showToast(`Merge failed: ${err.message}`, 'error');
+  }
+}
+
+// ── Git Context Menu ────────────────────────────────────────────────────
+
+let gitContextMenu = null;
+
+function showGitContextMenu(x, y, branch, currentBranch) {
+  removeGitContextMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'git-context-menu';
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+
+  const isCurrentBranch = branch === currentBranch;
+  const items = [];
+
+  if (!isCurrentBranch) {
+    items.push({ label: `Checkout ${branch}`, action: 'checkout' });
+    items.push({ label: `Merge ${branch} into ${currentBranch}`, action: 'merge' });
+  }
+
+  menu.innerHTML = items.map(item =>
+    `<div class="git-context-menu-item" data-action="${item.action}">${item.label}</div>`
+  ).join('');
+
+  if (items.length === 0) {
+    menu.innerHTML = '<div class="git-context-menu-item disabled">No actions</div>';
+  }
+
+  document.body.appendChild(menu);
+  gitContextMenu = menu;
+
+  // Position adjustment if off-screen
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+
+  menu.addEventListener('click', async (e) => {
+    const item = e.target.closest('[data-action]');
+    if (!item) return;
+    removeGitContextMenu();
+
+    if (item.dataset.action === 'checkout') {
+      try {
+        await window.api.gitCheckout(branch);
+        showToast(`Switched to ${branch}`, 'success');
+        renderGitView();
+      } catch (err) {
+        showToast(`Checkout failed: ${err.message}`, 'error');
+      }
+    } else if (item.dataset.action === 'merge') {
+      if (!confirm(`Merge "${branch}" into "${currentBranch}"?`)) return;
+      await performMerge(branch, currentBranch);
+    }
+  });
+
+  // Close on click outside
+  setTimeout(() => {
+    document.addEventListener('click', removeGitContextMenu, { once: true });
+  }, 0);
+}
+
+function removeGitContextMenu() {
+  if (gitContextMenu) {
+    gitContextMenu.remove();
+    gitContextMenu = null;
+  }
+}
+
+// Right-click on branch
+document.addEventListener('contextmenu', (e) => {
+  const branchEl = e.target.closest('[data-context-branch]');
+  if (!branchEl) return;
+  e.preventDefault();
+  const branch = branchEl.dataset.contextBranch;
+  // Find current branch from the HEAD-tagged item
+  const headItem = document.querySelector('.git-sidebar-branch-current [data-context-branch]') ||
+                   document.querySelector('.git-sidebar-branch-current');
+  const currentBranch = headItem?.dataset?.contextBranch || '';
+  showGitContextMenu(e.clientX, e.clientY, branch, currentBranch);
+});
+
 // ── Git View Event Handlers ─────────────────────────────────────────────
 
 document.addEventListener('click', async (e) => {
   // Refresh
   if (e.target.id === 'btn-git-refresh' || e.target.closest('#btn-git-refresh')) {
     renderGitView();
+    return;
+  }
+
+  // Abort merge
+  if (e.target.id === 'btn-git-abort-merge' || e.target.closest('#btn-git-abort-merge')) {
+    if (!confirm('Abort the current merge?')) return;
+    try {
+      await window.api.gitAbortMerge();
+      showToast('Merge aborted', 'success');
+      renderGitView();
+    } catch (err) {
+      showToast(`Abort failed: ${err.message}`, 'error');
+    }
     return;
   }
 

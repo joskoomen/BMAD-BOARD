@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld('api', {
   gitFetch: () => ipcRenderer.invoke('git:fetch'),
   gitPull: (remote, branch) => ipcRenderer.invoke('git:pull', remote, branch),
   gitPush: (remote, branch) => ipcRenderer.invoke('git:push', remote, branch),
+  gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
+  gitAbortMerge: () => ipcRenderer.invoke('git:abort-merge'),
   gitStage: (files) => ipcRenderer.invoke('git:stage', files),
   gitStageAll: () => ipcRenderer.invoke('git:stage-all'),
   gitUnstage: (files) => ipcRenderer.invoke('git:unstage', files),
