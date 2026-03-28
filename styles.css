@@ -2760,3 +2760,93 @@ html, body {
 .git-commit-file-item:hover .git-file-history-btn {
   opacity: 1;
 }
+
+/* ── Branch Arrows ───────────────────────────────────────────────────── */
+
+.git-branch-arrows {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.git-branch-ahead {
+  font-size: 10px;
+  color: var(--success);
+  font-weight: 600;
+}
+
+.git-branch-behind {
+  font-size: 10px;
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────── */
+
+@keyframes git-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.git-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: git-spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+
+.git-spinner-lg {
+  width: 18px;
+  height: 18px;
+  border-width: 2.5px;
+}
+
+.git-btn-loading {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+.git-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── Fade-in animation for panels ────────────────────────────────────── */
+
+@keyframes git-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.git-panels {
+  animation: git-fade-in 0.2s ease-out;
+}
+
+.git-toolbar {
+  animation: git-fade-in 0.15s ease-out;
+}
+
+.git-status-bar {
+  animation: git-fade-in 0.15s ease-out 0.05s both;
+}
+
+.git-panel {
+  animation: git-fade-in 0.2s ease-out;
+}
+
+.git-diff-viewer:not(.hidden) {
+  animation: git-fade-in 0.2s ease-out;
+}
+
+.git-commit-detail:not(.hidden) {
+  animation: git-fade-in 0.2s ease-out;
+}

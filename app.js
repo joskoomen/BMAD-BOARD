@@ -84,6 +84,7 @@ let searchQuery = '';
 let previousStoryStates = {};  // slug -> status, for change detection
 let pollTimer = null;
 let isGitRepo = false;         // whether the current project is a git repo
+let gitAutoFetchTimer = null;  // auto-fetch interval timer
 
 // ── Phase Config (mirror of lib/phase-commands.js for renderer) ─────────
 
@@ -268,6 +269,36 @@ async function detectGitRepo() {
   }
   const navGit = document.getElementById('nav-git');
   if (navGit) navGit.classList.toggle('hidden', !isGitRepo);
+
+  // Start auto-fetch if enabled
+  if (isGitRepo) startGitAutoFetch();
+}
+
+async function startGitAutoFetch() {
+  stopGitAutoFetch();
+  try {
+    const settings = await window.api.getSettings();
+    const interval = settings?.git?.autoFetchInterval ?? 5;
+    if (interval <= 0) return; // disabled
+    gitAutoFetchTimer = setInterval(async () => {
+      if (!isGitRepo) return;
+      try {
+        await window.api.gitFetch();
+        // If we're on the git view, refresh silently
+        const activeView = document.querySelector('.view.active');
+        if (activeView?.id === 'view-git') {
+          renderGitView();
+        }
+      } catch { /* silent fail */ }
+    }, interval * 60 * 1000);
+  } catch { /* no settings yet */ }
+}
+
+function stopGitAutoFetch() {
+  if (gitAutoFetchTimer) {
+    clearInterval(gitAutoFetchTimer);
+    gitAutoFetchTimer = null;
+  }
 }
 
 // ── Git View ────────────────────────────────────────────────────────────
@@ -288,6 +319,18 @@ function formatDiff(diff) {
     }
     return escaped;
   }).join('\n');
+}
+
+function gitBtnLoading(btn, label) {
+  btn.disabled = true;
+  btn.innerHTML = `<span class="git-spinner"></span> ${label}`;
+  btn.classList.add('git-btn-loading');
+}
+
+function gitBtnDone(btn, label) {
+  btn.disabled = false;
+  btn.textContent = label;
+  btn.classList.remove('git-btn-loading');
 }
 
 function formatTimeAgo(dateStr) {
@@ -314,7 +357,7 @@ async function renderGitView() {
     return;
   }
 
-  container.innerHTML = '<p class="git-loading">Loading git data...</p>';
+  container.innerHTML = '<div class="git-loading"><span class="git-spinner git-spinner-lg"></span> Loading git data...</div>';
 
   try {
     const [branches, status, log, tags, hasGh, stashList, isRebasing] = await Promise.all([
@@ -336,7 +379,11 @@ async function renderGitView() {
     const currentBranch = branches.current;
     const sidebarBranches = document.getElementById('git-sidebar-branches');
     if (sidebarBranches) {
-      const localHtml = branches.local.map(b => `
+      const localHtml = branches.local.map(b => {
+        const arrows = [];
+        if (b.ahead > 0) arrows.push(`<span class="git-branch-ahead" title="${b.ahead} ahead">&uarr;${b.ahead}</span>`);
+        if (b.behind > 0) arrows.push(`<span class="git-branch-behind" title="${b.behind} behind">&darr;${b.behind}</span>`);
+        return `
         <div class="git-sidebar-branch ${b.current ? 'git-sidebar-branch-current git-merge-drop-target' : 'git-sidebar-branch-clickable'}"
              ${b.current ? '' : `data-branch="${b.name}"`}
              ${!b.current ? `draggable="true" data-drag-branch="${b.name}"` : ''}
@@ -344,9 +391,10 @@ async function renderGitView() {
              title="${b.current ? 'Current branch (drop here to merge)' : `Checkout ${b.name}`}">
           <span class="git-sidebar-branch-icon">${b.current ? '&#9679;' : '&#9675;'}</span>
           <span class="git-sidebar-branch-name">${b.name}</span>
+          ${arrows.length ? `<span class="git-branch-arrows">${arrows.join(' ')}</span>` : ''}
           ${b.current ? '<span class="git-branch-tag">HEAD</span>' : ''}
         </div>
-      `).join('');
+      `}).join('');
 
       const remoteHtml = branches.remote.map(b => {
         const localName = b.name.replace(/^[^/]+\//, '');
@@ -922,16 +970,14 @@ document.addEventListener('click', async (e) => {
   // Fetch
   if (e.target.id === 'btn-git-fetch' || e.target.closest('#btn-git-fetch')) {
     const btn = document.getElementById('btn-git-fetch');
-    btn.disabled = true;
-    btn.textContent = 'Fetching...';
+    gitBtnLoading(btn, 'Fetch');
     try {
       await window.api.gitFetch();
       showToast('Fetch complete', 'success');
       renderGitView();
     } catch (err) {
       showToast(`Fetch failed: ${err.message}`, 'error');
-      btn.disabled = false;
-      btn.textContent = 'Fetch';
+      gitBtnDone(btn, 'Fetch');
     }
     return;
   }
@@ -940,8 +986,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'btn-git-pull' || e.target.closest('#btn-git-pull')) {
     const btn = document.getElementById('btn-git-pull');
     if (btn.disabled) return;
-    btn.disabled = true;
-    btn.textContent = 'Pulling...';
+    gitBtnLoading(btn, 'Pull');
     try {
       const result = await window.api.gitPull();
       const count = result.summary?.changes ?? 0;
@@ -949,8 +994,7 @@ document.addEventListener('click', async (e) => {
       renderGitView();
     } catch (err) {
       showToast(`Pull failed: ${err.message}`, 'error');
-      btn.disabled = false;
-      btn.textContent = 'Pull';
+      gitBtnDone(btn, 'Pull');
     }
     return;
   }
@@ -959,16 +1003,14 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'btn-git-push' || e.target.closest('#btn-git-push')) {
     const btn = document.getElementById('btn-git-push');
     if (btn.disabled) return;
-    btn.disabled = true;
-    btn.textContent = 'Pushing...';
+    gitBtnLoading(btn, 'Push');
     try {
       await window.api.gitPush();
       showToast('Push complete', 'success');
       renderGitView();
     } catch (err) {
       showToast(`Push failed: ${err.message}`, 'error');
-      btn.disabled = false;
-      btn.textContent = 'Push';
+      gitBtnDone(btn, 'Push');
     }
     return;
   }
@@ -2856,6 +2898,20 @@ async function renderSettings() {
       <div class="settings-section">
         <h3 class="settings-section-title">Git</h3>
         <div class="settings-field">
+          <label class="settings-label">Auto-fetch interval</label>
+          <select class="settings-select" id="settings-git-auto-fetch">
+            ${[
+              { value: '0', label: 'Off' },
+              { value: '1', label: 'Every 1 minute' },
+              { value: '5', label: 'Every 5 minutes' },
+              { value: '15', label: 'Every 15 minutes' },
+              { value: '60', label: 'Every 60 minutes' }
+            ].map(o =>
+              `<option value="${o.value}" ${o.value === String(settings.git?.autoFetchInterval ?? 5) ? 'selected' : ''}>${o.label}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="settings-field">
           <label class="settings-label">Merge tool</label>
           <select class="settings-select" id="settings-git-merge-tool">
             ${['default', 'vscode', 'webstorm', 'opendiff', 'meld', 'kdiff3', 'vimdiff'].map(t =>
@@ -3275,9 +3331,11 @@ async function saveSettingsFromForm() {
 
   // Git settings
   const mergeTool = document.getElementById('settings-git-merge-tool')?.value;
-  if (mergeTool) {
-    settings.git = { mergeTool };
-  }
+  const autoFetchInterval = parseInt(document.getElementById('settings-git-auto-fetch')?.value ?? '5');
+  settings.git = {
+    mergeTool: mergeTool || 'default',
+    autoFetchInterval
+  };
 
   // Merge companion state from existing settings
   if (existingSettings?.companion) {
@@ -3286,8 +3344,9 @@ async function saveSettingsFromForm() {
 
   await window.api.saveSettings(settings);
 
-  // Restart poller with new interval
+  // Restart pollers with new intervals
   startPhasePoller();
+  startGitAutoFetch();
 
   const status = document.getElementById('settings-save-status');
   if (status) {
