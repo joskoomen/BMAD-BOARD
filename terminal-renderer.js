@@ -479,6 +479,7 @@ async function createTab(slashCommand, opts) {
   }, 500);
 }
   renderTabs();
+  persistTabState();
   return tabId;
 }
 
@@ -611,7 +612,109 @@ function closeTab(tabId) {
   } else {
     renderTabs();
   }
+  persistTabState();
 }
+
+// ── Tab State Persistence ───────────────────────────────────────────────────
+
+/**
+ * Serialize current tabs into a saveable format.
+ */
+function serializeTabState() {
+  const tabList = [];
+  let activeIndex = 0;
+  let idx = 0;
+  for (const [tabId, tab] of tabs) {
+    tabList.push({
+      slashCommand: tab.slashCommand || null,
+      claudeSessionId: null, // sessions can't be resumed after close
+      label: tab.label,
+      emoji: tab.emoji,
+      storySlug: tab.storySlug || null,
+      storyPhase: tab.storyPhase || null,
+      clean: !tab.slashCommand
+    });
+    if (tabId === activeTabId) activeIndex = idx;
+    idx++;
+  }
+  return {
+    tabs: tabList,
+    activeIndex,
+    savedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Async persist current tab state to disk via IPC.
+ */
+function persistTabState() {
+  if (!terminalSetupDone) return;
+  const state = serializeTabState();
+  window.api.saveTabState(state).catch(() => { /* ignore */ });
+}
+
+/**
+ * Close all open tabs (used when switching projects).
+ */
+function closeAllTabs() {
+  const tabIds = [...tabs.keys()];
+  for (const tabId of tabIds) {
+    const tab = tabs.get(tabId);
+    if (!tab) continue;
+    if (tab.sessionId !== null) {
+      window.api.terminalKill(tab.sessionId);
+    }
+    if (tab.cleanupData) tab.cleanupData();
+    if (tab.cleanupExit) tab.cleanupExit();
+    if (tab._resizeObserver) tab._resizeObserver.disconnect();
+    tab.term.dispose();
+    tab.containerEl.remove();
+    tabs.delete(tabId);
+  }
+  activeTabId = null;
+  renderTabs();
+}
+window.closeAllTabs = closeAllTabs;
+
+/**
+ * Restore tabs from saved per-project tab state.
+ * If no saved state, creates a single default tab.
+ */
+async function restoreTabState() {
+  const state = await window.api.getTabState();
+  if (!state || !Array.isArray(state.tabs) || state.tabs.length === 0) {
+    // No saved state — create default tab only if terminal is initialized
+    if (terminalSetupDone) {
+      await createTab(null);
+    }
+    return;
+  }
+
+  // Ensure terminal is initialized before restoring
+  if (!terminalSetupDone) {
+    terminalSetupDone = true;
+    setupToolbar();
+    setupCommandPalette();
+    updateCwdDisplay();
+  }
+
+  for (let i = 0; i < state.tabs.length; i++) {
+    const saved = state.tabs[i];
+    await createTab(saved.slashCommand, {
+      clean: saved.clean || false,
+      storySlug: saved.storySlug || null,
+      storyPhase: saved.storyPhase || null
+    });
+  }
+
+  // Switch to previously active tab
+  const allTabIds = [...tabs.keys()];
+  const targetIdx = Math.min(state.activeIndex || 0, allTabIds.length - 1);
+  if (allTabIds.length > 0 && targetIdx >= 0) {
+    switchTab(allTabIds[targetIdx]);
+  }
+}
+window.restoreTabState = restoreTabState;
 
 // ── Tab Bar Rendering ────────────────────────────────────────────────────────
 

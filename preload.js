@@ -72,6 +72,10 @@ contextBridge.exposeInMainWorld('api', {
   archiveProject: (path) => ipcRenderer.invoke('project:archive', path),
   unarchiveProject: (path) => ipcRenderer.invoke('project:unarchive', path),
 
+  // Tab State (per-project persistence)
+  saveTabState: (state) => ipcRenderer.invoke('tab-state:save', state),
+  getTabState: () => ipcRenderer.invoke('tab-state:get'),
+
   // Session History
   saveSessionHistory: (entry) => ipcRenderer.invoke('session-history:save', entry),
   getSessionHistory: () => ipcRenderer.invoke('session-history:get'),

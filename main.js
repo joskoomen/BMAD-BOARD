@@ -703,6 +703,40 @@ ipcMain.handle('session-history:clear', (event) => {
   return [];
 });
 
+// ── Per-project tab state (.bmad-board/tab-state.json) ───────────────────
+
+function getTabStatePath(projectPath) {
+  return path.join(projectPath, '.bmad-board', 'tab-state.json');
+}
+
+function loadTabState(projectPath) {
+  if (!projectPath) return null;
+  try {
+    const filePath = getTabStatePath(projectPath);
+    if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveTabStateToDisk(projectPath, state) {
+  if (!projectPath) return;
+  const filePath = getTabStatePath(projectPath);
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+}
+
+ipcMain.handle('tab-state:save', (event, tabState) => {
+  const projectPath = getWindowProjectPath(event);
+  saveTabStateToDisk(projectPath, tabState);
+  return true;
+});
+
+ipcMain.handle('tab-state:get', (event) => {
+  const projectPath = getWindowProjectPath(event);
+  return loadTabState(projectPath);
+});
+
 // ── IPC: Settings ─────────────────────────────────────────────────────────
 
 /** Return the current application settings, falling back to hardcoded defaults.
