@@ -23,9 +23,10 @@
           <span class="nav-icon">&#128421;</span>
           <span>Terminal</span>
         </li>
-        <li class="nav-item" data-view="history">
+        <li class="nav-item" data-view="history" id="nav-history">
           <span class="nav-icon">&#128452;</span>
           <span>History</span>
+          <span class="nav-pro-badge" id="history-pro-badge">PRO</span>
         </li>
         <li class="nav-item" data-view="party">
           <span class="nav-icon">&#127881;</span>
@@ -35,9 +36,10 @@
           <span class="nav-icon">&#128450;</span>
           <span>Documents</span>
         </li>
-        <li class="nav-item" data-view="settings">
-          <span class="nav-icon">&#128295;</span>
-          <span>Settings</span>
+        <li class="nav-item hidden" data-view="git" id="nav-git">
+          <span class="nav-icon">&#128256;</span>
+          <span>Git</span>
+          <span class="nav-pro-badge" id="git-pro-badge">PRO</span>
         </li>
       </ul>
 
@@ -48,6 +50,16 @@
           <button id="btn-edit-quick-actions" class="sidebar-edit-btn" title="Edit quick actions">&#128397;</button>
         </div>
         <div id="bmad-action-list" class="bmad-action-list">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- Git Branches (visible when git view is active) -->
+      <div id="git-sidebar" class="sidebar-section hidden">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">Branches</div>
+        </div>
+        <div id="git-sidebar-branches">
           <!-- Rendered dynamically -->
         </div>
       </div>
@@ -106,6 +118,17 @@
           <!-- Documents View -->
           <div id="view-party" class="view"></div>
 
+          <!-- Git View -->
+          <div id="view-git" class="view">
+            <div class="view-header">
+              <h2>Git</h2>
+              <div class="view-actions">
+                <button class="btn btn-ghost btn-sm" id="btn-git-refresh">Refresh</button>
+              </div>
+            </div>
+            <div id="git-content" class="git-content"></div>
+          </div>
+
           <!-- Settings View -->
           <div id="view-settings" class="view">
             <div class="view-header">
@@ -161,6 +184,68 @@
       </div>
 
     </main>
+
+    <!-- Upgrade to Pro Modal -->
+    <div class="modal-overlay hidden" id="upgrade-modal">
+      <div class="modal upgrade-modal">
+        <div class="modal-header">
+          <h3>Upgrade to BMAD Board Pro</h3>
+          <button class="modal-close" id="upgrade-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="upgrade-feature-desc" id="upgrade-feature-desc">Unlock all Pro features including Git integration, multi-tab terminal, session history, and more.</p>
+
+          <div class="upgrade-features-list">
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Full Git integration</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Multi-tab terminal</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> All LLM providers</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Session history</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> File versioning</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Multi-window support</div>
+          </div>
+
+          <!-- Trial Section -->
+          <div class="upgrade-trial-section" id="trial-section">
+            <div class="upgrade-trial-box">
+              <div class="upgrade-trial-header">
+                <span class="upgrade-trial-icon">&#9889;</span>
+                <span>Try Pro free for 14 days</span>
+              </div>
+              <div class="upgrade-trial-form">
+                <input type="email" id="trial-email-input" class="input" placeholder="Your email address">
+                <button class="btn btn-primary btn-sm" id="btn-start-trial">Start Free Trial</button>
+              </div>
+              <p class="upgrade-trial-hint">No credit card required</p>
+            </div>
+          </div>
+
+          <div class="upgrade-divider">
+            <span>or subscribe</span>
+          </div>
+
+          <div class="upgrade-plan-toggle">
+            <button class="plan-btn active" id="plan-monthly" data-plan="monthly">Monthly</button>
+            <button class="plan-btn" id="plan-annual" data-plan="annual">Annual <span class="plan-save">Save 20%</span></button>
+          </div>
+
+          <button class="btn btn-primary btn-block upgrade-subscribe-btn" id="btn-subscribe">Subscribe to Pro</button>
+
+          <div class="upgrade-divider">
+            <span>or</span>
+          </div>
+
+          <div class="upgrade-license-section">
+            <button class="btn btn-ghost btn-sm" id="toggle-license-input">I have a license key</button>
+            <div class="upgrade-license-input hidden" id="license-input-group">
+              <input type="text" id="license-key-input" class="input" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX">
+              <button class="btn btn-primary btn-sm" id="btn-activate-key">Activate</button>
+            </div>
+            <p class="upgrade-license-error hidden" id="license-error"></p>
+            <p class="upgrade-license-success hidden" id="license-success">License activated! Enjoy BMAD Board Pro.</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

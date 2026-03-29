@@ -1,25 +1,55 @@
-/**
- * Terminal Renderer — Warp-style embedded terminal with multi-tab support
+/** Terminal Renderer — Warp-style embedded terminal with multi-tab support.
  *
- * Features:
- * - Multiple terminal tabs, each with its own PTY session
- * - Tab titles with emoji based on command type
- * - Auto-starts claude in each new session
- * - Warp-inspired command palette (Cmd+K)
- * - BMAD quick-action sidebar integration
+ * Manages the full lifecycle of the embedded xterm.js terminal panel, including:
+ * - Multi-tab PTY sessions, each backed by a node-pty process in the main process
+ * - Tab titles with emoji derived from BMAD slash commands via COMMAND_TAB_INFO
+ * - Automatic LLM startup (claude/codex/cursor/aider/opencode) in each new tab
+ * - Warp-inspired command palette (Cmd+K) for browsing and launching BMAD commands
+ * - Pinnable quick-action sidebar with persistent user customisation
+ * - Session history: saves every tab to disk so sessions can be resumed later
+ * - Activity monitoring: colour-coded dots that distinguish idle / working / exited tabs
+ * - Next-step suggestion bar shown when a tab's process exits
+ *
+ * Communication with the main process is exclusively through `window.api`
+ * (exposed by preload.js via contextBridge).  The renderer never calls Node APIs
+ * directly.
+ *
+ * @module terminal-renderer
  */
 
 /* global Terminal, FitAddon, WebLinksAddon */
 
 // ── Tab State ────────────────────────────────────────────────────────────────
 
-const tabs = new Map();   // tabId -> tab object
+/** Map of all open terminal tabs, keyed by numeric tab ID.
+ * @type {Map<number, object>}
+ */
+const tabs = new Map();
+
+/** The tab ID of the currently visible/focused tab, or null when no tabs exist.
+ * @type {number|null}
+ */
 let activeTabId = null;
+
+/** Monotonically-increasing counter used to assign unique IDs to new tabs.
+ * @type {number}
+ */
 let nextTabId = 1;
+
+/** Whether the xterm.js scripts and CSS have already been injected into the page.
+ * @type {boolean}
+ */
 let xtermLoaded = false;
+
+/** Zero-based index of the currently highlighted item in the command palette.
+ * @type {number}
+ */
 let paletteSelectedIndex = 0;
 
-// Shared xterm theme
+/** Shared xterm.js colour theme.  Inspired by Warp's dark palette with a purple
+ * accent.  Applied to every Terminal instance created by {@link createTab}.
+ * @type {object}
+ */
 const warpTheme = {
   background: '#0a0a1a',
   foreground: '#e4e4f0',
@@ -47,6 +77,14 @@ const warpTheme = {
 
 // ── Command → Tab Title Mapping ──────────────────────────────────────────────
 
+/** Mapping from BMAD slash-command strings to the emoji and short label used in
+ * the tab bar.  Consumed by {@link getTabInfo} and {@link toggleQuickAction}.
+ *
+ * Each key is a full slash command (e.g. `'/bmad-bmm-dev-story'`) and each
+ * value is `{ emoji: string, label: string }`.
+ *
+ * @type {Object<string, {emoji: string, label: string}>}
+ */
 const COMMAND_TAB_INFO = {
   '/bmad-bmm-dev-story':           { emoji: '\u25B6',  label: 'Dev Story' },
   '/bmad-bmm-create-story':        { emoji: '\u2795',  label: 'Create Story' },
@@ -82,6 +120,11 @@ const COMMAND_TAB_INFO = {
 
 // ── Next Step Suggestions ────────────────────────────────────────────────────
 
+/** Workflow-aware next-step suggestions shown when a tab's process exits.
+ * Maps a slash command to an ordered list of recommended follow-up actions.
+ * Each suggestion has `{ emoji, label, command }`.
+ * @type {Object<string, Array<{emoji: string, label: string, command: string}>>}
+ */
 const NEXT_STEPS = {
   '/bmad-bmm-create-story':    [
     { emoji: '\uD83D\uDCBB', label: 'Dev Story',     command: '/bmad-bmm-dev-story' },
@@ -125,15 +168,25 @@ const NEXT_STEPS = {
   ],
 };
 
+/** Return the list of suggested next-step actions for the given slash command.
+ * Strips any arguments so only the base command is looked up in NEXT_STEPS.
+ * @param {string|null} slashCommand - The slash command that just finished (e.g. '/bmad-bmm-dev-story 2.1').
+ * @returns {Array<{emoji: string, label: string, command: string}>} Suggested follow-up actions, or an empty array.
+ */
 function getNextSteps(slashCommand) {
   if (!slashCommand) return [];
   const baseCmd = slashCommand.split(' ')[0];
   return NEXT_STEPS[baseCmd] || [];
 }
 
-/**
- * Derive a tab title from a slash command string.
- * e.g. "/bmad-bmm-dev-story 2.5.5" → { emoji: "▶", label: "Dev Story 2.5.5" }
+/** Derive a tab title from a slash command string.
+ * Looks up the base command in {@link COMMAND_TAB_INFO} and appends any
+ * trailing arguments to the label.
+ * @example
+ * getTabInfo('/bmad-bmm-dev-story 2.5.5')
+ * // → { emoji: '▶', label: 'Dev Story 2.5.5' }
+ * @param {string|null} slashCommand - Full slash command, optionally with arguments.
+ * @returns {{emoji: string, label: string}} Display info for the tab, falling back to a generic Terminal entry.
  */
 function getTabInfo(slashCommand) {
   if (!slashCommand) return { emoji: '\u25B7', label: 'Terminal' };
@@ -154,6 +207,11 @@ function getTabInfo(slashCommand) {
 
 // ── BMAD Commands for palette ────────────────────────────────────────────────
 
+/** Full catalogue of BMAD commands available in the command palette (Cmd+K).
+ * Each entry has `{ id, title, desc, command, icon, category }` and is rendered
+ * as a searchable row in {@link renderPaletteResults}.
+ * @type {Array<{id: string, title: string, desc: string, command: string, icon: string, category: string}>}
+ */
 const BMAD_COMMANDS = [
   // ── Development ──
   { id: 'dev-story',       title: 'Dev Story',           desc: 'Implement a story from its spec file',           command: '/bmad-bmm-dev-story',           icon: '&#9654;',   category: 'dev' },
@@ -200,6 +258,12 @@ const BMAD_COMMANDS = [
 
 // ── Load xterm.js modules (once) ─────────────────────────────────────────────
 
+/** Lazily inject xterm.js and its addons into the page via dynamic script tags.
+ * Loads them in dependency order: xterm core → FitAddon → WebLinksAddon →
+ * Unicode11Addon.  Subsequent calls resolve immediately thanks to the
+ * `xtermLoaded` guard, so it is safe to call before every {@link createTab}.
+ * @returns {Promise<void>} Resolves once all scripts have loaded.
+ */
 function loadXtermModules() {
   if (xtermLoaded) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -216,7 +280,13 @@ function loadXtermModules() {
       fitScript.onload = () => {
         const linksScript = document.createElement('script');
         linksScript.src = './node_modules/@xterm/addon-web-links/lib/addon-web-links.js';
-        linksScript.onload = () => { xtermLoaded = true; resolve(); };
+        linksScript.onload = () => {
+          const unicodeScript = document.createElement('script');
+          unicodeScript.src = './node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js';
+          unicodeScript.onload = () => { xtermLoaded = true; resolve(); };
+          unicodeScript.onerror = () => { xtermLoaded = true; resolve(); };
+          document.head.appendChild(unicodeScript);
+        };
         linksScript.onerror = () => { xtermLoaded = true; resolve(); };
         document.head.appendChild(linksScript);
       };
@@ -239,6 +309,14 @@ function loadXtermModules() {
  * @returns {number} The new tab ID
  */
 async function createTab(slashCommand, opts) {
+  // Pro feature gate: free tier limited to 1 terminal tab
+  if (!window._isPro && tabs.length >= 1) {
+    if (typeof window.showUpgradeModal === 'function') {
+      window.showUpgradeModal('multi-tab');
+    }
+    return null;
+  }
+
   // Always ensure a claudeSessionId so every session can be resumed
   const resume = (opts && opts.resume) || false;
   const claudeSessionId = (opts && opts.claudeSessionId) || (resume ? null : crypto.randomUUID());
@@ -259,7 +337,7 @@ async function createTab(slashCommand, opts) {
     theme: warpTheme,
     fontFamily: "'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas', 'Fira Code', monospace",
     fontSize: 13,
-    lineHeight: 1.4,
+    lineHeight: 1.2,
     letterSpacing: 0,
     cursorStyle: 'bar',
     cursorBlink: true,
@@ -268,6 +346,7 @@ async function createTab(slashCommand, opts) {
     scrollback: 10000,
     tabStopWidth: 4,
     drawBoldTextInBrightColors: true,
+    fontWeightBold: 'normal',
     minimumContrastRatio: 1
   });
 
@@ -281,6 +360,11 @@ async function createTab(slashCommand, opts) {
   const WebLinksAddonClass = window.WebLinksAddon?.WebLinksAddon || (window.exports && window.exports.WebLinksAddon);
   if (WebLinksAddonClass) {
     term.loadAddon(new WebLinksAddonClass());
+  }
+  const Unicode11AddonClass = window.Unicode11Addon?.Unicode11Addon || (window.exports && window.exports.Unicode11Addon);
+  if (Unicode11AddonClass) {
+    term.loadAddon(new Unicode11AddonClass());
+    term.unicode.activeVersion = '11';
   }
 
   // Create container element
@@ -315,7 +399,9 @@ async function createTab(slashCommand, opts) {
     storyPhase,
     // Activity monitoring
     lastDataAt: null,
-    activityState: 'idle' // 'working' | 'idle' | 'exited'
+    activityState: 'idle', // 'working' | 'idle' | 'exited'
+    // Auto-return to git view when this tab's process exits
+    returnToGitView: opts?.returnToGitView || false
   };
 
   tabs.set(tabId, tab);
@@ -341,6 +427,7 @@ async function createTab(slashCommand, opts) {
     if (tab.fitAddon && tab.term && tab.id === activeTabId) {
       try {
         tab.fitAddon.fit();
+        tab.term.scrollToBottom();
       } catch { /* ignore */
       }
     }
@@ -404,6 +491,13 @@ async function createTab(slashCommand, opts) {
   return tabId;
 }
 
+/** Spawn a new PTY session for an existing tab and wire up data/exit listeners.
+ * Can also be called to replace a dead session on the same tab object — any
+ * previous IPC listeners are torn down before the new session is created.
+ * Sets `tab.sessionId` on success and marks `tab.alive = true`.
+ * @param {object} tab - The tab object from the {@link tabs} map.
+ * @returns {Promise<void>} Resolves once the PTY session has been created.
+ */
 async function createPtyForTab(tab) {
   // Clean up old listeners
   if (tab.cleanupData) tab.cleanupData();
@@ -431,6 +525,17 @@ async function createPtyForTab(tab) {
       tab.alive = false;
       updateStatusDot();
       renderTabs();
+
+      // If this tab was opened for merge conflict resolution, return to git view
+      if (tab.returnToGitView) {
+        setTimeout(() => {
+          closeTab(tab.id);
+          if (typeof window.showView === 'function') {
+            window.showView('git');
+          }
+        }, 1500);
+      }
+
       // Show next-step actions if this is the active tab
       if (tab.id === activeTabId) {
         showNextStepBar(tab);
@@ -442,6 +547,11 @@ async function createPtyForTab(tab) {
   updateStatusDot();
 }
 
+/** Make the given tab active, showing its xterm container and hiding all others.
+ * Triggers a fit + focus after a short delay to let the layout settle.
+ * Also shows the next-step bar if the tab's process has already exited.
+ * @param {number} tabId - ID of the tab to switch to.
+ */
 function switchTab(tabId) {
   const tab = tabs.get(tabId);
   if (!tab) return;
@@ -462,18 +572,25 @@ function switchTab(tabId) {
     showNextStepBar(tab);
   }
 
-  // Fit and focus
+  // Fit and focus — stagger to ensure layout has settled
   if (tab.fitAddon) {
-    setTimeout(() => {
+    const doFit = () => {
       try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      tab.term.focus();
-    }, 50);
+      tab.term.scrollToBottom();
+    };
+    setTimeout(() => { doFit(); tab.term.focus(); }, 50);
+    setTimeout(doFit, 200);
   }
 
   updateStatusDot();
   renderTabs();
 }
 
+/** Close a terminal tab, killing its PTY session and removing its DOM elements.
+ * If the closed tab was active, switches to the most recently opened remaining
+ * tab; if no tabs remain, sets activeTabId to null and re-renders the tab bar.
+ * @param {number} tabId - ID of the tab to close.
+ */
 function closeTab(tabId) {
   const tab = tabs.get(tabId);
   if (!tab) return;
@@ -609,6 +726,11 @@ window.restoreTabState = restoreTabState;
 
 // ── Tab Bar Rendering ────────────────────────────────────────────────────────
 
+/** Re-render the tab bar from the current contents of the {@link tabs} map.
+ * Generates one `<div class="terminal-tab">` per tab with activity dot, close
+ * button, and a "+ " button to open a new tab.  Idempotent — safe to call
+ * after any state change.
+ */
 function renderTabs() {
   const container = document.getElementById('terminal-tabs');
   if (!container) return;
@@ -631,9 +753,18 @@ function renderTabs() {
   container.innerHTML = html;
 }
 
-// Global handlers for onclick
+// Global handlers for onclick — these are called from inline HTML generated by renderTabs()
+/** Switch to the specified tab (called from inline onclick in the tab bar).
+ * @param {number} tabId - ID of the tab to switch to.
+ */
 window.switchTerminalTab = function(tabId) { switchTab(tabId); };
+
+/** Close the specified tab (called from inline onclick in the tab bar).
+ * @param {number} tabId - ID of the tab to close.
+ */
 window.closeTerminalTab = function(tabId) { closeTab(tabId); };
+
+/** Open a new plain terminal tab (called from the "+" button in the tab bar). */
 window.newTerminalTab = function() { createTab(null); };
 
 // ── Active Stories Tracking ─────────────────────────────────────────────────
@@ -655,6 +786,11 @@ window.getActiveStories = getActiveStories;
 
 // ── Activity Monitor ────────────────────────────────────────────────────────
 
+/** Periodic activity monitor that downgrades a tab's state from 'working' to
+ * 'idle' once 3 seconds have passed with no new PTY output.  Runs every 2 s
+ * and only triggers a {@link renderTabs} call when at least one tab changes
+ * state, keeping unnecessary DOM updates to a minimum.
+ */
 setInterval(() => {
   let changed = false;
   for (const [, tab] of tabs) {
@@ -671,10 +807,17 @@ setInterval(() => {
 
 // ── Active Tab Helpers ───────────────────────────────────────────────────────
 
+/** Return the active tab object, or null if no tab is currently active.
+ * @returns {object|null} The tab from {@link tabs}, or null.
+ */
 function getActiveTab() {
   return activeTabId ? tabs.get(activeTabId) : null;
 }
 
+/** Force-fit the active terminal to its current container size.
+ * Called by the split-pane resize handler in app.js whenever the pane layout
+ * changes so the PTY column/row count stays in sync with the visible area.
+ */
 window.refitActiveTerminal = function() {
   const tab = getActiveTab();
   if (tab && tab.fitAddon) {
@@ -682,6 +825,11 @@ window.refitActiveTerminal = function() {
   }
 };
 
+/** Send a command string to the active tab's PTY as if the user typed it.
+ * A carriage return is appended automatically.  Does nothing if no tab is
+ * active or the session has already exited.
+ * @param {string} command - The text to send (without a trailing newline).
+ */
 function executeCommand(command) {
   const tab = getActiveTab();
   if (tab && tab.sessionId !== null && command) {
@@ -689,6 +837,9 @@ function executeCommand(command) {
   }
 }
 
+/** Update the small status indicator dot in the terminal toolbar to reflect
+ * whether the active tab has a live PTY session (connected vs. disconnected).
+ */
 function updateStatusDot() {
   const dot = document.getElementById('terminal-status-dot');
   if (!dot) return;
@@ -699,6 +850,11 @@ function updateStatusDot() {
 
 // ── Next Step Action Bar ─────────────────────────────────────────────────────
 
+/** Inject the "what's next?" action bar above the status bar for a just-exited tab.
+ * Looks up workflow suggestions from {@link NEXT_STEPS} and renders one button
+ * per suggestion plus a "Close Tab" button.  Removes any existing bar first.
+ * @param {object} tab - The tab whose `slashCommand` is used to look up suggestions.
+ */
 function showNextStepBar(tab) {
   hideNextStepBar();
 
@@ -724,11 +880,16 @@ function showNextStepBar(tab) {
   }
 }
 
+/** Remove the next-step action bar from the DOM if it is currently visible. */
 function hideNextStepBar() {
   const existing = document.getElementById('terminal-next-steps');
   if (existing) existing.remove();
 }
 
+/** Handle a click on a next-step suggestion button.
+ * Closes the current (dead) tab and opens a new one with the given command.
+ * @param {string} command - The slash command to launch in the new tab.
+ */
 window.nextStepAction = function(command) {
   hideNextStepBar();
   // Close the current dead tab
@@ -742,6 +903,9 @@ window.nextStepAction = function(command) {
   createTab(command);
 };
 
+/** Handle a click on the "Close Tab" button in the next-step bar.
+ * Hides the bar and closes the active (dead) tab.
+ */
 window.nextStepClose = function() {
   hideNextStepBar();
   if (activeTabId) closeTab(activeTabId);
@@ -749,11 +913,13 @@ window.nextStepClose = function() {
 
 // ── Public API: Send command to terminal ─────────────────────────────────────
 
-/**
- * Send a slash command to the terminal.
- * Creates a new tab with the command as its title.
- * @param {string|null} slashCommand
- * @param {object} [opts] - { claudeSessionId, resume }
+/** Send a slash command to the terminal, creating a new tab.
+ * If the terminal has not been initialized yet, stores the command as a
+ * pending value that {@link initTerminal} will pick up on first load.
+ * @param {string|null} slashCommand - The slash command to run (e.g. '/bmad-bmm-dev-story'), or null for a plain shell.
+ * @param {object} [opts] - Options forwarded to {@link createTab}.
+ * @param {string} [opts.claudeSessionId] - Existing Claude session UUID for resume.
+ * @param {boolean} [opts.resume] - If true, pass `--resume` to claude instead of `--session-id`.
  */
 window.sendToTerminal = function(slashCommand, opts) {
   if (terminalSetupDone) {
@@ -768,6 +934,9 @@ window.sendToTerminal = function(slashCommand, opts) {
 
 // ── Toolbar Controls ─────────────────────────────────────────────────────────
 
+/** Attach event listeners to the terminal toolbar buttons.
+ * Currently wires the "Clear" button to call `term.clear()` on the active tab.
+ */
 function setupToolbar() {
   const clearBtn = document.getElementById('btn-terminal-clear');
   if (clearBtn) {
@@ -778,6 +947,10 @@ function setupToolbar() {
   }
 }
 
+/** Fetch the current project path and display a shortened version (last two
+ * path segments prefixed with `~/`) in the `#terminal-cwd` element.
+ * @returns {Promise<void>}
+ */
 async function updateCwdDisplay() {
   const cwdEl = document.getElementById('terminal-cwd');
   if (!cwdEl) return;
@@ -794,6 +967,11 @@ async function updateCwdDisplay() {
 
 // ── Command Palette (Cmd+K) ─────────────────────────────────────────────────
 
+/** Initialise the command palette UI: wire the search input (live filtering),
+ * keyboard navigation (↑↓ to move, Enter to launch, Escape to close), and
+ * dismiss-on-outside-click behaviour.  Should be called once during
+ * {@link initTerminal}.
+ */
 function setupCommandPalette() {
   const palette = document.getElementById('command-palette');
   if (!palette) return;
@@ -854,6 +1032,12 @@ function setupCommandPalette() {
   });
 }
 
+/** Render a list of BMAD commands into the palette results container.
+ * Each row shows an icon, title, description, and a pin button that toggles
+ * the command's membership in the quick-actions sidebar.
+ * @param {Array<{id: string, title: string, desc: string, command: string, icon: string, category: string}>} commands - Commands to display.
+ * @param {HTMLElement} container - The `.command-palette-results` element to populate.
+ */
 function renderPaletteResults(commands, container) {
   container.innerHTML = commands.map((cmd, i) => {
     const inQuickMenu = quickActions.some(a => a.command === cmd.command);
@@ -875,11 +1059,21 @@ function renderPaletteResults(commands, container) {
   }).join('');
 }
 
+/** Create a new tab for the given command and close the palette.
+ * Called from inline `onclick` handlers inside {@link renderPaletteResults}.
+ * @param {string} command - The slash command to run in the new tab.
+ */
 window.paletteCreateTab = function(command) {
   createTab(command);
   hidePalette();
 };
 
+/** Toggle a command's presence in the quick-actions sidebar.
+ * If the command is already pinned it is removed; otherwise it is appended.
+ * Persists the new list via {@link saveQuickActions} and refreshes both the
+ * sidebar and the palette pin-button states.
+ * @param {string} command - The slash command to pin or unpin.
+ */
 window.toggleQuickAction = function(command) {
   const idx = quickActions.findIndex(a => a.command === command);
   if (idx !== -1) {
@@ -905,6 +1099,9 @@ window.toggleQuickAction = function(command) {
   }
 };
 
+/** Highlight the item at {@link paletteSelectedIndex} and scroll it into view.
+ * @param {NodeList} items - All `.command-palette-item` elements in the results list.
+ */
 function updatePaletteSelection(items) {
   items.forEach((item, i) => {
     item.classList.toggle('selected', i === paletteSelectedIndex);
@@ -913,6 +1110,9 @@ function updatePaletteSelection(items) {
   if (selected) selected.scrollIntoView({ block: 'nearest' });
 }
 
+/** Show the command palette, clear any previous search text, reset the
+ * selection index, and focus the search input.
+ */
 function showPalette() {
   const palette = document.getElementById('command-palette');
   if (!palette) return;
@@ -924,6 +1124,7 @@ function showPalette() {
   renderPaletteResults(BMAD_COMMANDS, palette.querySelector('.command-palette-results'));
 }
 
+/** Hide the command palette and return keyboard focus to the active terminal. */
 function hidePalette() {
   const palette = document.getElementById('command-palette');
   if (palette) palette.classList.add('hidden');
@@ -933,6 +1134,11 @@ function hidePalette() {
 
 // ── BMAD Quick Actions (sidebar) — dynamic & editable ────────────────────────
 
+/** Factory-default set of quick-action buttons shown in the sidebar before the
+ * user customises them.  Loaded by {@link loadQuickActions} when no saved list
+ * is found in preferences.
+ * @type {Array<{emoji: string, label: string, command: string}>}
+ */
 const DEFAULT_QUICK_ACTIONS = [
   { emoji: '\uD83D\uDCD3', label: 'Create Story', command: '/bmad-bmm-create-story' },
   { emoji: '\uD83D\uDCBB', label: 'Dev Story',    command: '/bmad-bmm-dev-story' },
@@ -940,19 +1146,41 @@ const DEFAULT_QUICK_ACTIONS = [
   { emoji: '\uD83C\uDF89', label: 'Party Mode',   command: '/bmad-party-mode' },
 ];
 
+/** Currently pinned quick-action entries shown in the sidebar.  Loaded from
+ * persistent storage by {@link loadQuickActions} and mutated by
+ * {@link toggleQuickAction} / {@link showAddCommandForm}.
+ * @type {Array<{emoji: string, label: string, command: string}>}
+ */
 let quickActions = [];
+
+/** Whether the sidebar quick-actions list is in edit mode (shows remove buttons
+ * and the "Add Command" form trigger).
+ * @type {boolean}
+ */
 let quickActionsEditing = false;
 
+/** Load persisted quick-actions from the main process and render them.
+ * Falls back to {@link DEFAULT_QUICK_ACTIONS} if nothing has been saved yet.
+ * @returns {Promise<void>}
+ */
 async function loadQuickActions() {
   const saved = await window.api.getQuickActions();
   quickActions = saved || [...DEFAULT_QUICK_ACTIONS];
   renderQuickActions();
 }
 
+/** Persist the current {@link quickActions} array to the main process.
+ * @returns {Promise<void>}
+ */
 async function saveQuickActions() {
   await window.api.saveQuickActions(quickActions);
 }
 
+/** Re-render the quick-actions sidebar list from {@link quickActions}.
+ * In edit mode adds remove buttons on each entry and an "Add Command" row.
+ * Always appends the non-removable "More Actions" button at the bottom.
+ * Calls {@link wireQuickActionClicks} after updating the DOM.
+ */
 function renderQuickActions() {
   const list = document.getElementById('bmad-action-list');
   if (!list) return;
@@ -992,6 +1220,11 @@ function renderQuickActions() {
   wireQuickActionClicks();
 }
 
+/** Attach click handlers to all quick-action buttons after a
+ * {@link renderQuickActions} call.  Handles remove-button clicks,
+ * the "More Actions" shortcut (opens the palette), the "Add Command" form
+ * trigger, and normal command-launch clicks.
+ */
 function wireQuickActionClicks() {
   const list = document.getElementById('bmad-action-list');
   if (!list) return;
@@ -1036,6 +1269,11 @@ function wireQuickActionClicks() {
   });
 }
 
+/** Inject an inline form at the bottom of the quick-actions list that lets
+ * the user supply an emoji, label, and command string, then appends the new
+ * entry to {@link quickActions} and persists it.  The form is idempotent —
+ * calling this a second time while the form is already visible is a no-op.
+ */
 function showAddCommandForm() {
   // Check if form already exists
   if (document.getElementById('qa-add-form')) return;
@@ -1082,8 +1320,10 @@ function showAddCommandForm() {
   });
 }
 
-/**
- * Add a command to quick actions from the palette.
+/** Add a command to the quick-actions sidebar from an external caller (e.g.
+ * the command palette).  Looks up emoji and label from {@link COMMAND_TAB_INFO}.
+ * Silently ignores duplicate commands.
+ * @param {string} command - The slash command to add.
  */
 window.addToQuickActions = function(command) {
   // Find matching BMAD command for label/emoji
@@ -1099,6 +1339,9 @@ window.addToQuickActions = function(command) {
   renderQuickActions();
 };
 
+/** Initialise the BMAD sidebar: load persisted quick actions and wire the
+ * edit-mode toggle button.  Called once on `DOMContentLoaded`.
+ */
 function setupBmadActions() {
   // Load and render quick actions
   loadQuickActions();
@@ -1116,17 +1359,24 @@ function setupBmadActions() {
 
 // ── Keyboard Shortcuts ───────────────────────────────────────────────────────
 
+/** Global keyboard shortcut handler.
+ * - `Cmd/Ctrl+K` — toggle the command palette (switches to terminal view first if needed).
+ * - `Cmd/Ctrl+T` — open a new plain terminal tab (terminal view only).
+ * - `Cmd/Ctrl+W` — close the active terminal tab (terminal view only).
+ */
 document.addEventListener('keydown', (e) => {
-  // Cmd+K = Command palette (when terminal view is active)
+  // Cmd+K = Command palette (works from any view)
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    if (currentView === 'terminal') {
-      e.preventDefault();
-      const palette = document.getElementById('command-palette');
-      if (palette && !palette.classList.contains('hidden')) {
-        hidePalette();
-      } else {
-        showPalette();
-      }
+    e.preventDefault();
+    if (currentView !== 'terminal') {
+      const sv = window.showView || function() {};
+      sv('terminal');
+    }
+    const palette = document.getElementById('command-palette');
+    if (palette && !palette.classList.contains('hidden')) {
+      hidePalette();
+    } else {
+      showPalette();
     }
   }
 
@@ -1145,8 +1395,18 @@ document.addEventListener('keydown', (e) => {
 
 // ── Terminal Initialization (called once when terminal view is first shown) ──
 
+/** Guards against {@link initTerminal} being called more than once.
+ * Set to `true` at the very start of the first `initTerminal` invocation.
+ * @type {boolean}
+ */
 let terminalSetupDone = false;
 
+/** One-time initialisation routine for the terminal panel.
+ * Sets up the toolbar and command palette, refreshes the CWD label, and
+ * creates the first tab (picking up any pending command stored by
+ * {@link window.sendToTerminal} before the terminal was ready).
+ * @returns {Promise<void>}
+ */
 async function initTerminal() {
   if (terminalSetupDone) return;
   terminalSetupDone = true;
@@ -1163,15 +1423,49 @@ async function initTerminal() {
   await createTab(pending || null, pendingOpts || undefined);
 }
 
+// ── Companion: launch command from mobile ─────────────────────────────────────
+
+/** IPC listener for companion (mobile) launch-command events.
+ * Switches to the terminal view and opens a new tab with the requested
+ * command and optional story metadata.
+ */
+window.api.onCompanionLaunchCommand(({ command, storySlug, phase }) => {
+  // Switch to terminal view and open a new tab with the command
+  if (typeof window.showView === 'function') {
+    window.showView('terminal');
+  }
+  window.sendToTerminal(command, { storySlug, storyPhase: phase });
+});
+
 // ── Integration with main app.js view system ─────────────────────────────────
 
+/** Snapshot of the `window.showView` function defined by app.js before this
+ * module wraps it.  Called at the end of {@link terminalAwareShowView} to
+ * preserve the original layout-switching behaviour.
+ * @type {Function|undefined}
+ */
 const originalShowView = window.showView;
 
+/** Wraps `window.showView` to add terminal-specific side-effects.
+ * - Toggles visibility of the BMAD actions sidebar and Git sidebar based on
+ *   the active view.
+ * - Lazily initialises the terminal on first navigation to the terminal view.
+ * - Picks up any pending command queued before the terminal was ready.
+ * - Refits the active terminal after every view switch (split-pane size may
+ *   have changed).
+ * @param {string} view - The view identifier (e.g. `'terminal'`, `'git'`, `'epics'`).
+ */
 function terminalAwareShowView(view) {
   // Show/hide BMAD actions sidebar section
   const bmadActions = document.getElementById('bmad-actions');
   if (bmadActions) {
     bmadActions.classList.toggle('hidden', view !== 'terminal');
+  }
+
+  // Show/hide Git branches sidebar section
+  const gitSidebar = document.getElementById('git-sidebar');
+  if (gitSidebar) {
+    gitSidebar.classList.toggle('hidden', view !== 'git');
   }
 
   // Let the original showView handle layout (split-top/bottom visibility)
@@ -1194,10 +1488,9 @@ function terminalAwareShowView(view) {
         // Just focus the active tab
         const tab = getActiveTab();
         if (tab && tab.fitAddon) {
-          setTimeout(() => {
-            try { tab.fitAddon.fit(); } catch { /* ignore */ }
-            tab.term.focus();
-          }, 50);
+          const doFit = () => { try { tab.fitAddon.fit(); } catch { /* ignore */ } tab.term.scrollToBottom(); };
+          setTimeout(() => { doFit(); tab.term.focus(); }, 50);
+          setTimeout(doFit, 200);
         }
         // If no tabs exist, create one
         if (tabs.size === 0) {
@@ -1215,17 +1508,22 @@ function terminalAwareShowView(view) {
     // Refit terminal when switching views (split size may have changed)
     const tab = getActiveTab();
     if (tab && tab.fitAddon) {
-      setTimeout(() => {
-        try { tab.fitAddon.fit(); } catch { /* ignore */ }
-      }, 50);
+      const doFit = () => { try { tab.fitAddon.fit(); } catch { /* ignore */ } tab.term.scrollToBottom(); };
+      setTimeout(doFit, 50);
+      setTimeout(doFit, 200);
     }
   }
 }
 
 // ── Session History ──────────────────────────────────────────────────────────
 
-/**
- * Save a tab entry to persistent session history.
+/** Persist a newly-created tab's metadata to the per-project session history
+ * so it can be resumed later from the History view.
+ * @param {object} tab - The tab object (used for `tab.id`).
+ * @param {string|null} slashCommand - The slash command the tab was opened with.
+ * @param {object} [opts] - Options that may include `claudeSessionId`.
+ * @param {string} [opts.claudeSessionId] - UUID of the Claude session to save for future `--resume`.
+ * @returns {Promise<void>}
  */
 async function saveTabToHistory(tab, slashCommand, opts) {
   const { claudeSessionId } = opts || {};
@@ -1243,8 +1541,10 @@ async function saveTabToHistory(tab, slashCommand, opts) {
   });
 }
 
-/**
- * Render the session history view (called from app.js showView).
+/** Fetch and render the session history list in the History view.
+ * Displays up to the 5 most recent entries as cards with Resume/Restart and
+ * delete buttons.  Shows an empty-state prompt when no history exists.
+ * @returns {Promise<void>}
  */
 window.renderSessionHistory = async function() {
   const listEl = document.getElementById('history-list');
@@ -1308,8 +1608,12 @@ window.renderSessionHistory = async function() {
   }
 };
 
-/**
- * Resume a Claude session from history (uses --resume).
+/** Resume or restart a session from the History view.
+ * If `claudeSessionId` is present the session is resumed via `--resume`;
+ * otherwise the command is restarted as a fresh session.
+ * @param {string} entryId - History entry ID (currently unused, reserved for future use).
+ * @param {string} command - The slash command associated with this history entry.
+ * @param {string} claudeSessionId - Claude session UUID, or empty string if unavailable.
  */
 window.historyResumeSession = function(entryId, command, claudeSessionId) {
   if (claudeSessionId) {
@@ -1322,16 +1626,17 @@ window.historyResumeSession = function(entryId, command, claudeSessionId) {
   window.showView('terminal');
 };
 
-/**
- * Restart a command from history (fresh session, same command).
+/** Restart a command from history as a brand-new session (no `--resume`).
+ * @param {string} command - The slash command to run in the new session.
  */
 window.historyRestartSession = function(command) {
   window.sendToTerminal(command || null);
   window.showView('terminal');
 };
 
-/**
- * Remove a single session from history.
+/** Remove a single session entry from persistent history and refresh the view.
+ * @param {string} entryId - The unique ID of the history entry to remove.
+ * @returns {Promise<void>}
  */
 window.historyRemoveSession = async function(entryId) {
   await window.api.removeSessionHistory(entryId);
@@ -1340,6 +1645,11 @@ window.historyRemoveSession = async function(entryId) {
 
 // ── History Helpers ──────────────────────────────────────────────────────────
 
+/** Convert an ISO 8601 timestamp to a human-readable relative time string.
+ * Examples: "just now", "5m ago", "3h ago", "yesterday", "Mar 12".
+ * @param {string} isoString - ISO 8601 date string (e.g. from `new Date().toISOString()`).
+ * @returns {string} Relative time description.
+ */
 function formatTimeAgo(isoString) {
   const now = Date.now();
   const then = new Date(isoString).getTime();
@@ -1357,11 +1667,21 @@ function formatTimeAgo(isoString) {
   return new Date(isoString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/** Escape a string for safe insertion into HTML text content.
+ * Replaces `&`, `<`, `>`, and `"` with their HTML entity equivalents.
+ * @param {string} str - Raw string to escape.
+ * @returns {string} HTML-safe string, or an empty string if falsy.
+ */
 function escHtml(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** Escape a string for safe embedding inside an HTML attribute value delimited
+ * by single quotes (as used in inline `onclick` handlers in this file).
+ * @param {string} str - Raw string to escape.
+ * @returns {string} Attribute-safe string, or an empty string if falsy.
+ */
 function escAttr(str) {
   if (!str) return '';
   return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -1369,6 +1689,12 @@ function escAttr(str) {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
+/** Bootstrap the terminal renderer once the DOM is ready.
+ * Sets up the BMAD sidebar immediately, then wraps `window.showView` with
+ * {@link terminalAwareShowView} (deferred one microtask so app.js has time
+ * to assign its own `showView` first) and attaches a click listener on the
+ * terminal nav item.
+ */
 window.addEventListener('DOMContentLoaded', () => {
   // Wire up BMAD sidebar buttons immediately (before terminal is opened)
   setupBmadActions();
