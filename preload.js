@@ -1,18 +1,45 @@
 /**
- * Preload script — exposes a safe `window.api` bridge between the
- * renderer process and main process via Electron's contextBridge.
+ * @module preload
+ * @description Electron preload script — exposes a safe `window.api` bridge between the
+ * renderer process and the main process via Electron's contextBridge.
  *
- * Each method maps to an ipcMain handler in main.js.
- * Grouped by domain: project, settings, BMAD config, session history,
- * terminal, and companion server.
+ * This is the **only** way the renderer communicates with Node.js / Electron APIs.
+ * Each method maps 1:1 to an `ipcMain.handle` or `ipcMain.on` handler in `main.js`.
+ *
+ * Methods are grouped by domain:
+ * - **App** — version info, window management
+ * - **Project** — open, scan, read/write files, versioning, quick actions
+ * - **Settings** — preferences, LLM providers
+ * - **BMAD Config** — read/write `_bmad/` configuration files
+ * - **Session History** — per-project session tracking
+ * - **Terminal** — external terminal launcher, embedded PTY sessions
+ * - **Git** — full git operations (branches, commits, merge, rebase, stash, tags, diff)
+ * - **Companion** — companion PWA server management
+ * - **Menu Events** — keyboard shortcut / menu bar event forwarding
+ *
+ * @see main.js for the handler implementations
+ * @see app.js for the renderer-side consumer
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
+/**
+ * The `window.api` object exposed to the renderer process.
+ * All methods return Promises (via `ipcRenderer.invoke`) unless they are
+ * event listeners (via `ipcRenderer.on`), which return unsubscribe functions.
+ *
+ * @namespace window.api
+ */
 contextBridge.exposeInMainWorld('api', {
-  // Window
+  /** @returns {Promise<string>} The app version from package.json. */
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  /** Open a new BrowserWindow. @returns {Promise<boolean>} */
   newWindow: () => ipcRenderer.invoke('new-window'),
 
-  // Project
+  /**
+   * Open a native directory picker and load the selected project.
+   * @returns {Promise<Object|null>} Scan result with `{ found, epics, documents, ... }` or null if cancelled.
+   */
   openProject: () => ipcRenderer.invoke('open-project'),
   loadLastProject: () => ipcRenderer.invoke('load-last-project'),
   scanProject: () => ipcRenderer.invoke('scan-project'),
@@ -45,6 +72,10 @@ contextBridge.exposeInMainWorld('api', {
   archiveProject: (path) => ipcRenderer.invoke('project:archive', path),
   unarchiveProject: (path) => ipcRenderer.invoke('project:unarchive', path),
 
+  // Tab State (per-project persistence)
+  saveTabState: (state) => ipcRenderer.invoke('tab-state:save', state),
+  getTabState: () => ipcRenderer.invoke('tab-state:get'),
+
   // Session History
   saveSessionHistory: (entry) => ipcRenderer.invoke('session-history:save', entry),
   getSessionHistory: () => ipcRenderer.invoke('session-history:get'),
@@ -56,10 +87,82 @@ contextBridge.exposeInMainWorld('api', {
   launchPartyMode: () => ipcRenderer.invoke('launch-party-mode'),
   openTerminal: (command) => ipcRenderer.invoke('open-terminal', command),
 
+  // Git
+  gitIsRepo: () => ipcRenderer.invoke('git:is-repo'),
+  gitStatus: () => ipcRenderer.invoke('git:status'),
+  gitBranches: () => ipcRenderer.invoke('git:branches'),
+  gitLog: (limit) => ipcRenderer.invoke('git:log', limit),
+  gitCheckout: (branch) => ipcRenderer.invoke('git:checkout', branch),
+  gitCreateBranch: (name, startPoint) => ipcRenderer.invoke('git:create-branch', name, startPoint),
+  gitFetch: () => ipcRenderer.invoke('git:fetch'),
+  gitPull: (remote, branch) => ipcRenderer.invoke('git:pull', remote, branch),
+  gitPush: (remote, branch) => ipcRenderer.invoke('git:push', remote, branch),
+  gitMerge: (branch) => ipcRenderer.invoke('git:merge', branch),
+  gitAbortMerge: () => ipcRenderer.invoke('git:abort-merge'),
+  gitTags: () => ipcRenderer.invoke('git:tags'),
+  gitCreateTag: (name, message) => ipcRenderer.invoke('git:create-tag', name, message),
+  gitDeleteTag: (name) => ipcRenderer.invoke('git:delete-tag', name),
+  gitPushTag: (name) => ipcRenderer.invoke('git:push-tag', name),
+  gitPushAllTags: () => ipcRenderer.invoke('git:push-all-tags'),
+  gitOpenMergeTool: (file) => ipcRenderer.invoke('git:open-merge-tool', file),
+  gitStage: (files) => ipcRenderer.invoke('git:stage', files),
+  gitStageAll: () => ipcRenderer.invoke('git:stage-all'),
+  gitUnstage: (files) => ipcRenderer.invoke('git:unstage', files),
+  gitDiff: () => ipcRenderer.invoke('git:diff'),
+  gitDiffFile: (file, staged) => ipcRenderer.invoke('git:diff-file', file, staged),
+  gitCommit: (message) => ipcRenderer.invoke('git:commit', message),
+  gitHasGhCli: () => ipcRenderer.invoke('git:has-gh-cli'),
+  gitRemoteUrl: () => ipcRenderer.invoke('git:remote-url'),
+  gitStashList: () => ipcRenderer.invoke('git:stash-list'),
+  gitStash: (message) => ipcRenderer.invoke('git:stash', message),
+  gitStashPop: (index) => ipcRenderer.invoke('git:stash-pop', index),
+  gitStashDrop: (index) => ipcRenderer.invoke('git:stash-drop', index),
+  gitDeleteBranch: (name, force) => ipcRenderer.invoke('git:delete-branch', name, force),
+  gitDeleteRemoteBranch: (name) => ipcRenderer.invoke('git:delete-remote-branch', name),
+  gitShowCommit: (hash) => ipcRenderer.invoke('git:show-commit', hash),
+  gitCommitDiff: (hash) => ipcRenderer.invoke('git:commit-diff', hash),
+  gitCommitFileDiff: (hash, file) => ipcRenderer.invoke('git:commit-file-diff', hash, file),
+  gitDiscardFile: (file) => ipcRenderer.invoke('git:discard-file', file),
+  gitDiscardAll: () => ipcRenderer.invoke('git:discard-all'),
+  gitAmend: (message) => ipcRenderer.invoke('git:amend', message),
+  gitRevert: (hash) => ipcRenderer.invoke('git:revert', hash),
+  gitRebase: (branch) => ipcRenderer.invoke('git:rebase', branch),
+  gitRebaseAbort: () => ipcRenderer.invoke('git:rebase-abort'),
+  gitRebaseContinue: () => ipcRenderer.invoke('git:rebase-continue'),
+  gitIsRebasing: () => ipcRenderer.invoke('git:is-rebasing'),
+  gitFileLog: (file, limit) => ipcRenderer.invoke('git:file-log', file, limit),
+  gitReadConflictFile: (file) => ipcRenderer.invoke('git:read-conflict-file', file),
+  gitResolveConflict: (file, content) => ipcRenderer.invoke('git:resolve-conflict', file, content),
+
+  // License
+  getLicenseStatus: () => ipcRenderer.invoke('license:status'),
+  activateLicense: (key) => ipcRenderer.invoke('license:activate', key),
+  deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
+  validateLicense: () => ipcRenderer.invoke('license:validate'),
+  startTrial: (email) => ipcRenderer.invoke('license:start-trial', email),
+  getTrialStatus: () => ipcRenderer.invoke('license:trial-status'),
+  openCheckout: (plan) => ipcRenderer.invoke('license:open-checkout', plan),
+  onLicenseActivated: (callback) => {
+    ipcRenderer.on('license:activated', callback);
+    return () => ipcRenderer.removeListener('license:activated', callback);
+  },
+
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),
   toggleCompanion: (enabled) => ipcRenderer.invoke('companion:toggle', enabled),
   regenerateCompanionToken: () => ipcRenderer.invoke('companion:regenerate-token'),
+
+  // Sync Providers
+  syncListProviders: () => ipcRenderer.invoke('sync:list-providers'),
+  syncConfigure: (provider, config) => ipcRenderer.invoke('sync:configure', provider, config),
+  syncValidate: (provider, config) => ipcRenderer.invoke('sync:validate', provider, config),
+  syncTestConnection: (provider, config) => ipcRenderer.invoke('sync:test-connection', provider, config),
+  syncSetup: () => ipcRenderer.invoke('sync:setup'),
+  syncAll: (opts) => ipcRenderer.invoke('sync:all', opts),
+  syncPush: () => ipcRenderer.invoke('sync:push'),
+  syncPull: () => ipcRenderer.invoke('sync:pull'),
+  syncItem: (type, key) => ipcRenderer.invoke('sync:item', type, key),
+  syncStatus: () => ipcRenderer.invoke('sync:status'),
 
   // Embedded Terminal (PTY)
   terminalCreate: (opts) => ipcRenderer.invoke('terminal:create', opts || {}),
@@ -89,5 +192,10 @@ contextBridge.exposeInMainWorld('api', {
   onShowSettings: (callback) => {
     ipcRenderer.on('show-settings', callback);
     return () => ipcRenderer.removeListener('show-settings', callback);
+  },
+  onCompanionLaunchCommand: (callback) => {
+    const handler = (_, payload) => callback(payload);
+    ipcRenderer.on('companion-launch-command', handler);
+    return () => ipcRenderer.removeListener('companion-launch-command', handler);
   }
 });
