@@ -111,6 +111,8 @@ contextBridge.exposeInMainWorld('api', {
   activateLicense: (key) => ipcRenderer.invoke('license:activate', key),
   deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
   validateLicense: () => ipcRenderer.invoke('license:validate'),
+  startTrial: (email) => ipcRenderer.invoke('license:start-trial', email),
+  getTrialStatus: () => ipcRenderer.invoke('license:trial-status'),
   openCheckout: (plan) => ipcRenderer.invoke('license:open-checkout', plan),
   onLicenseActivated: (callback) => {
     ipcRenderer.on('license:activated', callback);

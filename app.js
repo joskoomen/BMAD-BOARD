@@ -180,9 +180,15 @@ function showUpgradeModal(featureName) {
   const licenseGroup = document.getElementById('license-input-group');
   const licenseError = document.getElementById('license-error');
   const licenseSuccess = document.getElementById('license-success');
+  const trialSection = document.getElementById('trial-section');
   if (licenseGroup) licenseGroup.classList.add('hidden');
   if (licenseError) licenseError.classList.add('hidden');
   if (licenseSuccess) licenseSuccess.classList.add('hidden');
+
+  // Hide trial if already used (expired or active)
+  if (trialSection) {
+    trialSection.classList.toggle('hidden', licenseStatus.trialUsed === true);
+  }
 
   modal.classList.remove('hidden');
 }
@@ -292,6 +298,38 @@ function setupUpgradeModal() {
       }
       activateBtn.disabled = false;
       activateBtn.textContent = 'Activate';
+    });
+  }
+
+  // Start trial
+  const trialBtn = document.getElementById('btn-start-trial');
+  const trialEmail = document.getElementById('trial-email-input');
+  if (trialBtn && trialEmail) {
+    trialBtn.addEventListener('click', async () => {
+      const email = trialEmail.value.trim();
+      if (!email || !email.includes('@')) {
+        showToast('Please enter a valid email address', 'error');
+        return;
+      }
+
+      trialBtn.disabled = true;
+      trialBtn.textContent = 'Starting...';
+
+      try {
+        const result = await window.api.startTrial(email);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          hideUpgradeModal();
+          showToast('Pro trial started — 14 days free!', 'success');
+        } else {
+          showToast(result.error || 'Could not start trial', 'error');
+        }
+      } catch {
+        showToast('Failed to start trial', 'error');
+      }
+      trialBtn.disabled = false;
+      trialBtn.textContent = 'Start Free Trial';
     });
   }
 }
@@ -3422,7 +3460,14 @@ async function renderSettings() {
       <!-- License -->
       <div class="settings-section">
         <h3 class="settings-section-title">License</h3>
-        ${isPro() ? `
+        ${isPro() && licenseStatus.trial ? `
+          <div class="upgrade-trial-banner">
+            <span>&#9889;</span>
+            <span>Pro Trial — ${licenseStatus.trialDaysLeft} day${licenseStatus.trialDaysLeft !== 1 ? 's' : ''} remaining</span>
+          </div>
+          <p class="settings-hint" style="margin-top:8px">Subscribe to keep Pro features after your trial ends.</p>
+          <button class="btn btn-primary btn-sm" id="btn-upgrade-from-settings" style="margin-top:8px">Subscribe to Pro</button>
+        ` : isPro() ? `
           <div class="settings-manifest">
             <div class="settings-manifest-item"><span>Status</span><span style="color:#22c55e">&#10003; BMAD Board Pro</span></div>
             ${licenseStatus.plan ? `<div class="settings-manifest-item"><span>Plan</span><span>${licenseStatus.plan}</span></div>` : ''}

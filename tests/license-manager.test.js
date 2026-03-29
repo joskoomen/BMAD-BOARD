@@ -314,4 +314,99 @@ describe('LicenseManager', () => {
       expect(m.getStatus().active).toBe(false);
     });
   });
+
+  describe('trial', () => {
+    it('rejects trial without email', () => {
+      const result = manager.startTrial('');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Valid email address required');
+    });
+
+    it('rejects trial with invalid email', () => {
+      const result = manager.startTrial('not-an-email');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Valid email address required');
+    });
+
+    it('starts trial with valid email', () => {
+      const result = manager.startTrial('user@example.com');
+      expect(result.success).toBe(true);
+
+      const status = manager.getStatus();
+      expect(status.active).toBe(true);
+      expect(status.trial).toBe(true);
+      expect(status.plan).toBe('trial');
+      expect(status.trialDaysLeft).toBe(14);
+      expect(status.trialUsed).toBe(true);
+    });
+
+    it('stores email in trial data', () => {
+      manager.startTrial('test@domain.com');
+      const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8'));
+      expect(prefs.trial.email).toBe('test@domain.com');
+    });
+
+    it('normalizes email to lowercase', () => {
+      manager.startTrial('User@Example.COM');
+      const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8'));
+      expect(prefs.trial.email).toBe('user@example.com');
+    });
+
+    it('rejects second trial', () => {
+      manager.startTrial('first@example.com');
+      const result = manager.startTrial('second@example.com');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Trial already used');
+    });
+
+    it('shows trial as expired after 14 days', () => {
+      // Write a trial that started 15 days ago
+      const old = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
+      fs.writeFileSync(prefsPath, JSON.stringify({
+        trial: { email: 'user@test.com', startedAt: old, durationMs: 14 * 24 * 60 * 60 * 1000 }
+      }));
+      const m = new LicenseManager(prefsPath);
+
+      const status = m.getStatus();
+      expect(status.active).toBe(false);
+      expect(status.trial).toBe(false);
+      expect(status.trialUsed).toBe(true);
+      expect(status.trialDaysLeft).toBe(0);
+    });
+
+    it('shows correct days remaining during trial', () => {
+      // Trial started 10 days ago → 4 days left
+      const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+      fs.writeFileSync(prefsPath, JSON.stringify({
+        trial: { email: 'user@test.com', startedAt: tenDaysAgo, durationMs: 14 * 24 * 60 * 60 * 1000 }
+      }));
+      const m = new LicenseManager(prefsPath);
+
+      const status = m.getStatus();
+      expect(status.active).toBe(true);
+      expect(status.trial).toBe(true);
+      expect(status.trialDaysLeft).toBe(4);
+    });
+
+    it('license takes precedence over trial', () => {
+      // Both trial and license active
+      fs.writeFileSync(prefsPath, JSON.stringify({
+        trial: { email: 'user@test.com', startedAt: new Date().toISOString(), durationMs: 14 * 24 * 60 * 60 * 1000 },
+        license: { key: 'MY-KEY', status: 'active', variantName: 'monthly', validatedAt: new Date().toISOString() }
+      }));
+      const m = new LicenseManager(prefsPath);
+
+      const status = m.getStatus();
+      expect(status.active).toBe(true);
+      expect(status.trial).toBe(false);
+      expect(status.plan).toBe('monthly');
+    });
+
+    it('getTrialStatus returns not used when no trial', () => {
+      const status = manager.getTrialStatus();
+      expect(status.active).toBe(false);
+      expect(status.used).toBe(false);
+      expect(status.daysLeft).toBe(0);
+    });
+  });
 });

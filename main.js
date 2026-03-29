@@ -817,6 +817,16 @@ ipcMain.handle('license:validate', async () => {
   return licenseManager.validate();
 });
 
+ipcMain.handle('license:start-trial', async (_, email) => {
+  if (!licenseManager) return { success: false, error: 'License manager not initialized' };
+  return licenseManager.startTrial(email);
+});
+
+ipcMain.handle('license:trial-status', () => {
+  if (!licenseManager) return { active: false, daysLeft: 0, used: false };
+  return licenseManager.getTrialStatus();
+});
+
 ipcMain.handle('license:open-checkout', async (event, plan) => {
   if (!licenseManager) return { success: false, error: 'License manager not initialized' };
   if (!licenseManager.isConfigured()) {

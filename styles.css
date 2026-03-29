@@ -3206,6 +3206,65 @@ html, body {
   font-weight: 700;
 }
 
+/* Trial box */
+.upgrade-trial-section {
+  margin-bottom: 16px;
+}
+
+.upgrade-trial-box {
+  background: rgba(34, 197, 94, 0.06);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.upgrade-trial-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: #22c55e;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.upgrade-trial-icon {
+  font-size: 16px;
+}
+
+.upgrade-trial-form {
+  display: flex;
+  gap: 8px;
+}
+
+.upgrade-trial-form .input {
+  flex: 1;
+  font-size: 13px;
+}
+
+.upgrade-trial-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.upgrade-trial-section.hidden {
+  display: none;
+}
+
+/* Trial active banner in settings */
+.upgrade-trial-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: #22c55e;
+}
+
 .upgrade-divider {
   text-align: center;
   position: relative;
