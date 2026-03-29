@@ -392,8 +392,8 @@ html, body {
 }
 
 .warning-box {
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
   border-radius: var(--radius-lg);
   padding: 20px 24px;
   color: var(--warning);
@@ -2878,8 +2878,8 @@ html, body {
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
   transition: background var(--transition);
 }
 
@@ -3085,8 +3085,8 @@ html, body {
   letter-spacing: 0.5px;
   padding: 1px 5px;
   border-radius: 3px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: #000;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff;
   margin-left: 6px;
   vertical-align: middle;
   line-height: 1.4;
@@ -3120,7 +3120,7 @@ html, body {
 }
 
 .upgrade-modal .modal-header h3 {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
+  background: linear-gradient(135deg, #22c55e, #16a34a);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -3271,16 +3271,16 @@ html, body {
   justify-content: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
   border-radius: var(--radius);
-  color: #f59e0b;
+  color: #22c55e;
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .terminal-pro-prompt:hover {
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
 }
