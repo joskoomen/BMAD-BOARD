@@ -3931,7 +3931,7 @@ async function renderSyncSection() {
       `;
 
       document.getElementById('btn-sync-configure')?.addEventListener('click', async () => {
-        const config = {};
+        const config = { ...existingConfig };
         for (const f of provider.configFields) {
           const input = document.getElementById(`sync-cfg-${f.key}`);
           if (input && input.value) config[f.key] = input.value;
