@@ -21,6 +21,7 @@ const { openClaudeWithCommand, openPartyMode } = require('./lib/terminal-launche
 const { TerminalManager } = require('./lib/terminal-manager');
 const { getProviderList } = require('./lib/llm-providers');
 const { CompanionServer, startHeartbeat } = require('./lib/companion-server');
+const { LicenseManager } = require('./lib/license-manager');
 
 let mainWindow;
 let currentProjectPath = null;
@@ -28,6 +29,7 @@ const windowProjectPaths = new Map();  // webContents.id -> projectPath
 const terminalManager = new TerminalManager();
 let companionServer = null;
 let companionHeartbeat = null;
+let licenseManager = null;
 
 const PREFS_FILE = path.join(app.getPath('userData'), 'preferences.json');
 
@@ -105,6 +107,12 @@ function getWindowFromEvent(event) {
 }
 
 app.whenReady().then(async () => {
+  // Initialize license manager
+  licenseManager = new LicenseManager(PREFS_FILE);
+  if (licenseManager.needsRevalidation()) {
+    licenseManager.validate().catch(() => {});
+  }
+
   // Build application menu with keyboard shortcuts
   const isMac = process.platform === 'darwin';
   const template = [
@@ -703,6 +711,40 @@ ipcMain.handle('session-history:clear', (event) => {
   return [];
 });
 
+// ── Per-project tab state (.bmad-board/tab-state.json) ───────────────────
+
+function getTabStatePath(projectPath) {
+  return path.join(projectPath, '.bmad-board', 'tab-state.json');
+}
+
+function loadTabState(projectPath) {
+  if (!projectPath) return null;
+  try {
+    const filePath = getTabStatePath(projectPath);
+    if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveTabStateToDisk(projectPath, state) {
+  if (!projectPath) return;
+  const filePath = getTabStatePath(projectPath);
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+}
+
+ipcMain.handle('tab-state:save', (event, tabState) => {
+  const projectPath = getWindowProjectPath(event);
+  saveTabStateToDisk(projectPath, tabState);
+  return true;
+});
+
+ipcMain.handle('tab-state:get', (event) => {
+  const projectPath = getWindowProjectPath(event);
+  return loadTabState(projectPath);
+});
+
 // ── IPC: Settings ─────────────────────────────────────────────────────────
 
 /** Return the current application settings, falling back to hardcoded defaults.
@@ -932,6 +974,89 @@ ipcMain.handle('project:unarchive', (_, projectPath) => {
     savePrefs(prefs);
   }
   return true;
+});
+
+// ── IPC: License ──────────────────────────────────────────────────────
+
+ipcMain.handle('license:status', () => {
+  return licenseManager ? licenseManager.getStatus() : { active: false, plan: null };
+});
+
+ipcMain.handle('license:activate', async (_, key) => {
+  if (!licenseManager) return { success: false, error: 'License manager not initialized' };
+  return licenseManager.activate(key);
+});
+
+ipcMain.handle('license:deactivate', async () => {
+  if (!licenseManager) return { success: false, error: 'License manager not initialized' };
+  return licenseManager.deactivate();
+});
+
+ipcMain.handle('license:validate', async () => {
+  if (!licenseManager) return { valid: false, error: 'License manager not initialized' };
+  return licenseManager.validate();
+});
+
+ipcMain.handle('license:start-trial', async (_, email) => {
+  if (!licenseManager) return { success: false, error: 'License manager not initialized' };
+  return licenseManager.startTrial(email);
+});
+
+ipcMain.handle('license:trial-status', () => {
+  if (!licenseManager) return { active: false, daysLeft: 0, used: false };
+  return licenseManager.getTrialStatus();
+});
+
+ipcMain.handle('license:open-checkout', async (event, plan) => {
+  if (!licenseManager) return { success: false, error: 'License manager not initialized' };
+  if (!licenseManager.isConfigured()) {
+    return { success: false, error: 'Lemon Squeezy store not configured yet' };
+  }
+
+  const checkoutUrl = licenseManager.getCheckoutUrl(plan || 'monthly');
+  const parentWindow = getWindowFromEvent(event);
+
+  const checkoutWin = new BrowserWindow({
+    width: 500,
+    height: 750,
+    parent: parentWindow,
+    modal: true,
+    resizable: true,
+    title: 'BMAD Board Pro — Subscribe',
+    backgroundColor: '#0a0a1a',
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+
+  checkoutWin.setMenuBarVisibility(false);
+  checkoutWin.loadURL(checkoutUrl);
+
+  // Listen for the success redirect containing the license key
+  return new Promise((resolve) => {
+    checkoutWin.webContents.on('will-navigate', async (_e, url) => {
+      if (url.includes('license_key=') || url.includes('success')) {
+        try {
+          const urlObj = new URL(url);
+          const key = urlObj.searchParams.get('license_key');
+          if (key) {
+            const result = await licenseManager.activate(key);
+            if (result.success && parentWindow && !parentWindow.isDestroyed()) {
+              parentWindow.webContents.send('license:activated');
+            }
+            resolve(result);
+          } else {
+            resolve({ success: false, error: 'No license key in redirect' });
+          }
+        } catch (err) {
+          resolve({ success: false, error: err.message });
+        }
+        if (!checkoutWin.isDestroyed()) checkoutWin.close();
+      }
+    });
+
+    checkoutWin.on('closed', () => {
+      resolve({ success: false, error: 'Checkout window closed' });
+    });
+  });
 });
 
 // ── IPC: Git ────────────────────────────────────────────────────────────

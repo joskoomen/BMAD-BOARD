@@ -85,6 +85,7 @@ let previousStoryStates = {};  // slug -> status, for change detection
 let pollTimer = null;
 let isGitRepo = false;         // whether the current project is a git repo
 let gitAutoFetchTimer = null;  // auto-fetch interval timer
+let licenseStatus = { active: false, plan: null }; // Pro license state
 
 // ── Phase Config (mirror of lib/phase-commands.js for renderer) ─────────
 
@@ -98,14 +99,256 @@ const PHASES = {
 
 const PHASE_ORDER = ['backlog', 'ready-for-dev', 'in-progress', 'review', 'done'];
 
+// ── Pro License ────────────────────────────────────────────────────────
+
+const PRO_FEATURES = {
+  'git': 'Git integration lets you manage branches, commits, merges, and more — all from within BMAD Board.',
+  'session-history': 'Session history lets you track and resume your development sessions across stories.',
+  'multi-tab': 'Multi-tab terminal lets you run multiple terminal sessions side by side.',
+  'multi-window': 'Multi-window lets you open several BMAD Board windows simultaneously.',
+  'providers': 'Access all 5 LLM providers: Claude Code, Codex, Cursor, Aider, and OpenCode.',
+  'file-versioning': 'File versioning automatically snapshots your files before each save.',
+  'notifications': 'Get OS notifications when story phases change.',
+};
+
+/** Check if current license is active (Pro). */
+function isPro() {
+  return licenseStatus.active === true;
+}
+
+/**
+ * Require Pro for a feature — if not Pro, show upgrade modal.
+ * @param {string} featureName - Key from PRO_FEATURES
+ * @returns {boolean} true if Pro, false if blocked
+ */
+function requirePro(featureName) {
+  if (isPro()) return true;
+  showUpgradeModal(featureName);
+  return false;
+}
+
+/** Initialize license status and update UI badges. */
+async function initLicense() {
+  try {
+    licenseStatus = await window.api.getLicenseStatus();
+  } catch {
+    licenseStatus = { active: false, plan: null };
+  }
+  updateProBadges();
+
+  // Listen for activation events from checkout window
+  window.api.onLicenseActivated(() => {
+    window.api.getLicenseStatus().then(status => {
+      licenseStatus = status;
+      updateProBadges();
+    });
+  });
+
+  // Expose for terminal-renderer
+  window._isPro = isPro();
+}
+
+/** Show/hide Pro badges in nav based on license status. */
+function updateProBadges() {
+  const pro = isPro();
+  window._isPro = pro;
+
+  const gitBadge = document.getElementById('git-pro-badge');
+  const historyBadge = document.getElementById('history-pro-badge');
+  const navGit = document.getElementById('nav-git');
+  const navHistory = document.getElementById('nav-history');
+
+  if (gitBadge) gitBadge.classList.toggle('hidden', pro);
+  if (historyBadge) historyBadge.classList.toggle('hidden', pro);
+  if (navGit) navGit.classList.toggle('pro-locked', !pro);
+  if (navHistory) navHistory.classList.toggle('pro-locked', !pro);
+}
+
+/** Show the upgrade modal with context about which feature was requested. */
+function showUpgradeModal(featureName) {
+  const modal = document.getElementById('upgrade-modal');
+  const desc = document.getElementById('upgrade-feature-desc');
+  if (!modal) return;
+
+  if (featureName && PRO_FEATURES[featureName]) {
+    desc.textContent = PRO_FEATURES[featureName];
+  } else {
+    desc.textContent = 'Unlock all Pro features including Git integration, multi-tab terminal, session history, and more.';
+  }
+
+  // Reset state
+  const licenseGroup = document.getElementById('license-input-group');
+  const licenseError = document.getElementById('license-error');
+  const licenseSuccess = document.getElementById('license-success');
+  const trialSection = document.getElementById('trial-section');
+  if (licenseGroup) licenseGroup.classList.add('hidden');
+  if (licenseError) licenseError.classList.add('hidden');
+  if (licenseSuccess) licenseSuccess.classList.add('hidden');
+
+  // Hide trial if already used (expired or active)
+  if (trialSection) {
+    trialSection.classList.toggle('hidden', licenseStatus.trialUsed === true);
+  }
+
+  modal.classList.remove('hidden');
+}
+
+/** Hide the upgrade modal. */
+function hideUpgradeModal() {
+  const modal = document.getElementById('upgrade-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+/** Setup upgrade modal event handlers. */
+function setupUpgradeModal() {
+  // Close button
+  const closeBtn = document.getElementById('upgrade-modal-close');
+  if (closeBtn) closeBtn.addEventListener('click', hideUpgradeModal);
+
+  // Click outside to close
+  const modal = document.getElementById('upgrade-modal');
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) hideUpgradeModal();
+    });
+  }
+
+  // Plan toggle
+  const monthlyBtn = document.getElementById('plan-monthly');
+  const annualBtn = document.getElementById('plan-annual');
+  if (monthlyBtn && annualBtn) {
+    monthlyBtn.addEventListener('click', () => {
+      monthlyBtn.classList.add('active');
+      annualBtn.classList.remove('active');
+    });
+    annualBtn.addEventListener('click', () => {
+      annualBtn.classList.add('active');
+      monthlyBtn.classList.remove('active');
+    });
+  }
+
+  // Subscribe button
+  const subscribeBtn = document.getElementById('btn-subscribe');
+  if (subscribeBtn) {
+    subscribeBtn.addEventListener('click', async () => {
+      const plan = document.querySelector('.plan-btn.active')?.dataset.plan || 'monthly';
+      subscribeBtn.disabled = true;
+      subscribeBtn.textContent = 'Opening checkout...';
+      try {
+        const result = await window.api.openCheckout(plan);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          hideUpgradeModal();
+          showToast('Welcome to BMAD Board Pro!', 'success');
+        } else if (result.error && result.error !== 'Checkout window closed') {
+          showToast(result.error, 'error');
+        }
+      } catch (err) {
+        showToast('Failed to open checkout', 'error');
+      }
+      subscribeBtn.disabled = false;
+      subscribeBtn.textContent = 'Subscribe to Pro';
+    });
+  }
+
+  // Toggle license key input
+  const toggleBtn = document.getElementById('toggle-license-input');
+  const licenseGroup = document.getElementById('license-input-group');
+  if (toggleBtn && licenseGroup) {
+    toggleBtn.addEventListener('click', () => {
+      licenseGroup.classList.toggle('hidden');
+    });
+  }
+
+  // Activate license key
+  const activateBtn = document.getElementById('btn-activate-key');
+  const keyInput = document.getElementById('license-key-input');
+  const errorEl = document.getElementById('license-error');
+  const successEl = document.getElementById('license-success');
+  if (activateBtn && keyInput) {
+    activateBtn.addEventListener('click', async () => {
+      const key = keyInput.value.trim();
+      if (!key) return;
+
+      activateBtn.disabled = true;
+      activateBtn.textContent = 'Activating...';
+      if (errorEl) errorEl.classList.add('hidden');
+      if (successEl) successEl.classList.add('hidden');
+
+      try {
+        const result = await window.api.activateLicense(key);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          if (successEl) successEl.classList.remove('hidden');
+          setTimeout(() => hideUpgradeModal(), 1500);
+          showToast('Welcome to BMAD Board Pro!', 'success');
+        } else {
+          if (errorEl) {
+            errorEl.textContent = result.error || 'Activation failed';
+            errorEl.classList.remove('hidden');
+          }
+        }
+      } catch {
+        if (errorEl) {
+          errorEl.textContent = 'Network error — please try again';
+          errorEl.classList.remove('hidden');
+        }
+      }
+      activateBtn.disabled = false;
+      activateBtn.textContent = 'Activate';
+    });
+  }
+
+  // Start trial
+  const trialBtn = document.getElementById('btn-start-trial');
+  const trialEmail = document.getElementById('trial-email-input');
+  if (trialBtn && trialEmail) {
+    trialBtn.addEventListener('click', async () => {
+      const email = trialEmail.value.trim();
+      if (!email || !email.includes('@')) {
+        showToast('Please enter a valid email address', 'error');
+        return;
+      }
+
+      trialBtn.disabled = true;
+      trialBtn.textContent = 'Starting...';
+
+      try {
+        const result = await window.api.startTrial(email);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          hideUpgradeModal();
+          showToast('Pro trial started — 14 days free!', 'success');
+        } else {
+          showToast(result.error || 'Could not start trial', 'error');
+        }
+      } catch {
+        showToast('Failed to start trial', 'error');
+      }
+      trialBtn.disabled = false;
+      trialBtn.textContent = 'Start Free Trial';
+    });
+  }
+}
+
+// Expose for terminal-renderer
+window.showUpgradeModal = showUpgradeModal;
+
 // ── Init ────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Load license status first (affects UI rendering)
+  await initLicense();
+
   setupNavigation();
   setupKeyboardShortcuts();
   setupProjectSelector();
   setupSplitResize();
   setupToastContainer();
+  setupUpgradeModal();
 
   // Try loading last project
   const data = await window.api.loadLastProject();
@@ -191,8 +434,10 @@ function setupNavigation() {
       } else if (view === 'documents') {
         if (projectData) sv('documents');
       } else if (view === 'history') {
+        if (!requirePro('session-history')) return;
         sv('history');
       } else if (view === 'git') {
+        if (!requirePro('git')) return;
         if (isGitRepo) sv('git');
       } else if (view === 'terminal') {
         sv('terminal');
@@ -225,7 +470,7 @@ function setupKeyboardShortcuts() {
     // Cmd+N = new window (handled by menu accelerator, but keep as fallback)
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'n') {
       e.preventDefault();
-      window.api.newWindow();
+      if (requirePro('multi-window')) window.api.newWindow();
     }
   });
 
@@ -3082,6 +3327,11 @@ function setupProjectSelector() {
     const selectedPath = e.target.value;
     if (!selectedPath) return;
 
+    // Close old project's tabs
+    if (typeof window.closeAllTabs === 'function') {
+      window.closeAllTabs();
+    }
+
     const data = await window.api.loadProjectByPath(selectedPath);
     if (data && data.found) {
       projectData = data;
@@ -3090,6 +3340,10 @@ function setupProjectSelector() {
       await detectGitRepo();
       showView('epics');
       startPhasePoller();
+      // Restore new project's saved tabs
+      if (typeof window.restoreTabState === 'function') {
+        window.restoreTabState();
+      }
     } else {
       projectData = null;
       stopPhasePoller();
@@ -3126,6 +3380,12 @@ function setupInlineProjectSelect(selectId) {
   select.addEventListener('change', async (e) => {
     const selectedPath = e.target.value;
     if (!selectedPath) return;
+
+    // Close old project's tabs
+    if (typeof window.closeAllTabs === 'function') {
+      window.closeAllTabs();
+    }
+
     const data = await window.api.loadProjectByPath(selectedPath);
     if (data && data.found) {
       projectData = data;
@@ -3134,6 +3394,10 @@ function setupInlineProjectSelect(selectId) {
       await detectGitRepo();
       showView('epics');
       startPhasePoller();
+      // Restore new project's saved tabs
+      if (typeof window.restoreTabState === 'function') {
+        window.restoreTabState();
+      }
     }
   });
 }
@@ -3186,13 +3450,15 @@ async function renderSettings() {
 
   settingsData = { ...settings };
 
-  const providerOptions = providers.map(p =>
-    `<option value="${p.key}"${p.key === settings.defaultLlm ? ' selected' : ''}>${p.name}</option>`
-  ).join('');
+  const providerOptions = providers.map(p => {
+    const locked = !isPro() && p.key !== 'claude';
+    return `<option value="${p.key}"${p.key === settings.defaultLlm ? ' selected' : ''}${locked ? ' disabled' : ''}>${p.name}${locked ? ' (Pro)' : ''}</option>`;
+  }).join('');
 
-  const reviewOptions = providers.map(p =>
-    `<option value="${p.key}"${p.key === settings.reviewLlm ? ' selected' : ''}>${p.name}</option>`
-  ).join('');
+  const reviewOptions = providers.map(p => {
+    const locked = !isPro() && p.key !== 'claude';
+    return `<option value="${p.key}"${p.key === settings.reviewLlm ? ' selected' : ''}${locked ? ' disabled' : ''}>${p.name}${locked ? ' (Pro)' : ''}</option>`;
+  }).join('');
 
   const llmConfig = settings.llmConfig || {};
   const termSettings = settings.terminal || {};
@@ -3424,6 +3690,29 @@ async function renderSettings() {
       </div>
       ` : ''}
 
+      <!-- License -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">License</h3>
+        ${isPro() && licenseStatus.trial ? `
+          <div class="upgrade-trial-banner">
+            <span>&#9889;</span>
+            <span>Pro Trial — ${licenseStatus.trialDaysLeft} day${licenseStatus.trialDaysLeft !== 1 ? 's' : ''} remaining</span>
+          </div>
+          <p class="settings-hint" style="margin-top:8px">Subscribe to keep Pro features after your trial ends.</p>
+          <button class="btn btn-primary btn-sm" id="btn-upgrade-from-settings" style="margin-top:8px">Subscribe to Pro</button>
+        ` : isPro() ? `
+          <div class="settings-manifest">
+            <div class="settings-manifest-item"><span>Status</span><span style="color:#22c55e">&#10003; BMAD Board Pro</span></div>
+            ${licenseStatus.plan ? `<div class="settings-manifest-item"><span>Plan</span><span>${licenseStatus.plan}</span></div>` : ''}
+            ${licenseStatus.customerEmail ? `<div class="settings-manifest-item"><span>Email</span><span>${licenseStatus.customerEmail}</span></div>` : ''}
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-deactivate-license" style="color:var(--danger);margin-top:8px">Deactivate License</button>
+        ` : `
+          <p class="settings-hint">You're using the free version. Upgrade to unlock Git integration, multi-tab terminal, and more.</p>
+          <button class="btn btn-primary btn-sm" id="btn-upgrade-from-settings" style="margin-top:8px">Upgrade to Pro</button>
+        `}
+      </div>
+
       <!-- About -->
       <div class="settings-section">
         <h3 class="settings-section-title">About</h3>
@@ -3453,6 +3742,23 @@ async function renderSettings() {
       input.addEventListener('input', () => bmadSaveBtn.disabled = false);
     });
     bmadSaveBtn.addEventListener('click', saveBmadConfigFromForm);
+  }
+
+  // Wire license buttons
+  const upgradeBtn = document.getElementById('btn-upgrade-from-settings');
+  if (upgradeBtn) {
+    upgradeBtn.addEventListener('click', () => showUpgradeModal());
+  }
+  const deactivateBtn = document.getElementById('btn-deactivate-license');
+  if (deactivateBtn) {
+    deactivateBtn.addEventListener('click', async () => {
+      if (!confirm('Deactivate your Pro license on this machine?')) return;
+      await window.api.deactivateLicense();
+      licenseStatus = await window.api.getLicenseStatus();
+      updateProBadges();
+      renderSettings();
+      showToast('License deactivated', 'info');
+    });
   }
 
   // Render companion section

@@ -72,6 +72,10 @@ contextBridge.exposeInMainWorld('api', {
   archiveProject: (path) => ipcRenderer.invoke('project:archive', path),
   unarchiveProject: (path) => ipcRenderer.invoke('project:unarchive', path),
 
+  // Tab State (per-project persistence)
+  saveTabState: (state) => ipcRenderer.invoke('tab-state:save', state),
+  getTabState: () => ipcRenderer.invoke('tab-state:get'),
+
   // Session History
   saveSessionHistory: (entry) => ipcRenderer.invoke('session-history:save', entry),
   getSessionHistory: () => ipcRenderer.invoke('session-history:get'),
@@ -129,6 +133,19 @@ contextBridge.exposeInMainWorld('api', {
   gitFileLog: (file, limit) => ipcRenderer.invoke('git:file-log', file, limit),
   gitReadConflictFile: (file) => ipcRenderer.invoke('git:read-conflict-file', file),
   gitResolveConflict: (file, content) => ipcRenderer.invoke('git:resolve-conflict', file, content),
+
+  // License
+  getLicenseStatus: () => ipcRenderer.invoke('license:status'),
+  activateLicense: (key) => ipcRenderer.invoke('license:activate', key),
+  deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
+  validateLicense: () => ipcRenderer.invoke('license:validate'),
+  startTrial: (email) => ipcRenderer.invoke('license:start-trial', email),
+  getTrialStatus: () => ipcRenderer.invoke('license:trial-status'),
+  openCheckout: (plan) => ipcRenderer.invoke('license:open-checkout', plan),
+  onLicenseActivated: (callback) => {
+    ipcRenderer.on('license:activated', callback);
+    return () => ipcRenderer.removeListener('license:activated', callback);
+  },
 
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),
