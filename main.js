@@ -1,3 +1,17 @@
+/** @file main.js — Electron main process for BMAD Board.
+ *
+ * Responsibilities:
+ *  - Application lifecycle (window creation, menu, app events)
+ *  - IPC handler registration for all renderer ↔ main communication
+ *  - Project management (open, scan, list, persist MRU)
+ *  - Per-project session history (load, save, migrate from legacy global storage)
+ *  - File versioning (automatic snapshots before overwrites)
+ *  - Embedded PTY terminal management via node-pty
+ *  - External terminal/LLM launcher integration
+ *  - Companion HTTP/WebSocket server lifecycle
+ *  - Git operations via GitManager
+ *  - User preference persistence (userData/preferences.json)
+ */
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -258,8 +272,12 @@ function updateStoryStatusInYaml(projectPath, slug, newPhase) {
   fs.writeFileSync(filePath, content, 'utf-8');
 }
 
+// ── IPC: App ──────────────────────────────────────────────────────────────
+
+/** Return the current application version string. */
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+/** Open a new BrowserWindow and return true. */
 ipcMain.handle('new-window', () => {
   createWindow();
   return true;
@@ -282,8 +300,9 @@ app.on('activate', async () => {
   }
 });
 
-// ── IPC: Project management ──────────────────────────────────────────────
+// ── IPC: Project Management ──────────────────────────────────────────────
 
+/** Show a directory picker and load the selected project. Returns scanned project data or null. */
 ipcMain.handle('open-project', async (event) => {
   const win = getWindowFromEvent(event);
   const result = await dialog.showOpenDialog(win, {
@@ -294,6 +313,7 @@ ipcMain.handle('open-project', async (event) => {
   return loadProject(result.filePaths[0], event);
 });
 
+/** Load the most recently opened project from preferences. Returns scanned data or null. */
 ipcMain.handle('load-last-project', (event) => {
   const prefs = loadPrefs();
   if (prefs.lastProjectPath && fs.existsSync(prefs.lastProjectPath)) {
@@ -302,12 +322,16 @@ ipcMain.handle('load-last-project', (event) => {
   return null;
 });
 
+/** Re-scan the current window's project and return fresh BMAD data. */
 ipcMain.handle('scan-project', (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return null;
   return scanProject(projectPath);
 });
 
+/** Read a file from disk and return its UTF-8 contents, or null on error.
+ * @param {string} filePath - Absolute path to the file.
+ */
 ipcMain.handle('read-file', (_, filePath) => {
   try {
     return fs.readFileSync(filePath, 'utf-8');
@@ -316,6 +340,11 @@ ipcMain.handle('read-file', (_, filePath) => {
   }
 });
 
+/** Write content to a file, creating a version snapshot if the content changed.
+ * @param {string} filePath - Absolute path to the file.
+ * @param {string} content - New file content to write.
+ * @returns {{success: boolean}|{error: string}}
+ */
 ipcMain.handle('write-file', (_, filePath, content) => {
   try {
     // Create a version snapshot before overwriting
@@ -330,10 +359,18 @@ ipcMain.handle('write-file', (_, filePath, content) => {
   }
 });
 
+/** Return all saved version snapshots for a file.
+ * @param {string} filePath - Absolute path to the file.
+ */
 ipcMain.handle('get-file-versions', (_, filePath) => {
   return getVersions(filePath);
 });
 
+/** Restore a previously saved version of a file by index, snapshotting the current content first.
+ * @param {string} filePath - Absolute path to the file.
+ * @param {number} versionIndex - Zero-based index into the saved versions array.
+ * @returns {{success: boolean, content: string}|{error: string}}
+ */
 ipcMain.handle('restore-file-version', (_, filePath, versionIndex) => {
   try {
     const versions = getVersions(filePath);
@@ -351,8 +388,12 @@ ipcMain.handle('restore-file-version', (_, filePath, versionIndex) => {
   }
 });
 
-// ── IPC: Terminal / Claude commands (external) ───────────────────────────
+// ── IPC: Terminal / Claude Commands (External) ───────────────────────────
 
+/** Build and launch an LLM phase command in an external terminal.
+ * @param {{phase: string, storySlug: string, storyFilePath: string}} args
+ * @returns {{success: boolean, command: string}|{error: string}}
+ */
 ipcMain.handle('launch-phase-command', async (event, { phase, storySlug, storyFilePath }) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -366,6 +407,9 @@ ipcMain.handle('launch-phase-command', async (event, { phase, storySlug, storyFi
   }
 });
 
+/** Launch all stories in party mode using the LLM launcher.
+ * @returns {{success: boolean}|{error: string}}
+ */
 ipcMain.handle('launch-party-mode', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -377,6 +421,10 @@ ipcMain.handle('launch-party-mode', async (event) => {
   }
 });
 
+/** Open an external terminal window, optionally running a command on launch.
+ * @param {string} [command] - Shell command to run on open.
+ * @returns {{success: boolean}|{error: string}}
+ */
 ipcMain.handle('open-terminal', async (event, command) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -391,6 +439,10 @@ ipcMain.handle('open-terminal', async (event, command) => {
 
 // ── IPC: Embedded Terminal (PTY) ─────────────────────────────────────────
 
+/** Create a new PTY session in the current project directory.
+ * @param {{cols: number, rows: number}} dimensions - Initial terminal dimensions.
+ * @returns {{id: string}} The new session identifier.
+ */
 ipcMain.handle('terminal:create', (event, { cols, rows }) => {
   const cwd = getWindowProjectPath(event) || require('os').homedir();
   const senderContents = event.sender;
@@ -420,23 +472,37 @@ ipcMain.handle('terminal:create', (event, { cols, rows }) => {
   return { id };
 });
 
+/** Forward keyboard input data to a PTY session.
+ * @param {{id: string, data: string}} payload
+ */
 ipcMain.on('terminal:input', (_, { id, data }) => {
   terminalManager.write(id, data);
 });
 
+/** Resize a PTY session to new column/row dimensions.
+ * @param {{id: string, cols: number, rows: number}} payload
+ */
 ipcMain.on('terminal:resize', (_, { id, cols, rows }) => {
   terminalManager.resize(id, cols, rows);
 });
 
+/** Kill a PTY session by ID.
+ * @param {{id: string}} payload
+ * @returns {{success: boolean}}
+ */
 ipcMain.handle('terminal:kill', (_, { id }) => {
   terminalManager.kill(id);
   return { success: true };
 });
 
+// ── IPC: Project / Preferences Helpers ───────────────────────────────────
+
+/** Return the project path currently associated with the calling window. */
 ipcMain.handle('get-project-path', (event) => {
   return getWindowProjectPath(event);
 });
 
+/** Return the MRU project list, filtering out directories that no longer exist. */
 ipcMain.handle('get-project-list', () => {
   const prefs = loadPrefs();
   const projects = Array.isArray(prefs.projects) ? prefs.projects : [];
@@ -444,11 +510,18 @@ ipcMain.handle('get-project-list', () => {
   return projects.filter(p => fs.existsSync(p.path));
 });
 
+/** Load a project by an explicit path. Returns scanned data, or null if the path is invalid.
+ * @param {string} projectPath - Absolute path to the project root.
+ */
 ipcMain.handle('load-project-by-path', (event, projectPath) => {
   if (!projectPath || !fs.existsSync(projectPath)) return null;
   return loadProject(projectPath, event);
 });
 
+/** Remove a project entry from the MRU list in preferences.
+ * @param {string} projectPath - Path of the project to remove.
+ * @returns {Array} Updated project list.
+ */
 ipcMain.handle('remove-project-from-list', (_, projectPath) => {
   const prefs = loadPrefs();
   if (!Array.isArray(prefs.projects)) return;
@@ -457,11 +530,15 @@ ipcMain.handle('remove-project-from-list', (_, projectPath) => {
   return prefs.projects;
 });
 
+/** Return persisted quick-action definitions, or null to indicate defaults should be used. */
 ipcMain.handle('get-quick-actions', () => {
   const prefs = loadPrefs();
   return prefs.quickActions || null; // null = use defaults
 });
 
+/** Persist custom quick-action definitions to preferences.
+ * @param {Array} actions - Array of quick-action definition objects.
+ */
 ipcMain.handle('save-quick-actions', (_, actions) => {
   const prefs = loadPrefs();
   prefs.quickActions = actions;
@@ -469,16 +546,30 @@ ipcMain.handle('save-quick-actions', (_, actions) => {
   return true;
 });
 
+/** Open a URL in the system's default browser.
+ * @param {string} url - The URL to open externally.
+ */
 ipcMain.handle('open-external', (_, url) => {
   shell.openExternal(url);
 });
 
+/** Retrieve the persisted Claude session ID for a story/phase pair.
+ * @param {string} storySlug - Unique story slug identifier.
+ * @param {string} phase - Story phase name.
+ * @returns {string|null} Stored session ID, or null if not found.
+ */
 ipcMain.handle('get-story-session', (_, storySlug, phase) => {
   const prefs = loadPrefs();
   if (!prefs.storySessions) return null;
   return prefs.storySessions[`${storySlug}:${phase}`] || null;
 });
 
+/** Persist a Claude session ID for a story/phase pair.
+ * @param {string} storySlug - Unique story slug identifier.
+ * @param {string} phase - Story phase name.
+ * @param {string} sessionId - The Claude session ID to persist.
+ * @returns {boolean} Always true on success.
+ */
 ipcMain.handle('save-story-session', (_, storySlug, phase, sessionId) => {
   const prefs = loadPrefs();
   if (!prefs.storySessions) prefs.storySessions = {};
@@ -488,8 +579,7 @@ ipcMain.handle('save-story-session', (_, storySlug, phase, sessionId) => {
 });
 
 // ── IPC: Session History ─────────────────────────────────────────────────
-
-// ── Per-project session history (.bmad-board/session-history.json) ────────
+// Per-project history is stored in <project>/.bmad-board/session-history.json
 
 /** Get the per-project session history file path.
  * @param {string} projectPath
@@ -549,6 +639,10 @@ function saveProjectHistory(projectPath, history) {
   fs.writeFileSync(histFile, JSON.stringify(history, null, 2));
 }
 
+/** Upsert a session history entry for the current project (max 20 entries kept).
+ * @param {Object} entry - Session history entry object (id, command, claudeSessionId, etc.).
+ * @returns {boolean} Always true on success.
+ */
 ipcMain.handle('session-history:save', (event, entry) => {
   const projectPath = getWindowProjectPath(event);
   const history = loadProjectHistory(projectPath);
@@ -581,11 +675,18 @@ ipcMain.handle('session-history:save', (event, entry) => {
   return true;
 });
 
+/** Return all session history entries for the current project.
+ * @returns {Array} Array of session history entry objects.
+ */
 ipcMain.handle('session-history:get', (event) => {
   const projectPath = getWindowProjectPath(event);
   return loadProjectHistory(projectPath);
 });
 
+/** Remove a single session history entry by ID.
+ * @param {string} entryId - The unique ID of the entry to remove.
+ * @returns {Array} Updated history array.
+ */
 ipcMain.handle('session-history:remove', (event, entryId) => {
   const projectPath = getWindowProjectPath(event);
   const history = loadProjectHistory(projectPath).filter(e => e.id !== entryId);
@@ -593,6 +694,9 @@ ipcMain.handle('session-history:remove', (event, entryId) => {
   return history;
 });
 
+/** Clear all session history entries for the current project.
+ * @returns {Array} Empty array.
+ */
 ipcMain.handle('session-history:clear', (event) => {
   const projectPath = getWindowProjectPath(event);
   saveProjectHistory(projectPath, []);
@@ -601,6 +705,9 @@ ipcMain.handle('session-history:clear', (event) => {
 
 // ── IPC: Settings ─────────────────────────────────────────────────────────
 
+/** Return the current application settings, falling back to hardcoded defaults.
+ * @returns {Object} Settings object including LLM config, terminal, and notification options.
+ */
 ipcMain.handle('settings:get', () => {
   const prefs = loadPrefs();
   return prefs.settings || {
@@ -627,6 +734,10 @@ ipcMain.handle('settings:get', () => {
   };
 });
 
+/** Persist the full settings object to preferences.
+ * @param {Object} settings - Settings object to save.
+ * @returns {boolean} Always true on success.
+ */
 ipcMain.handle('settings:save', (_, settings) => {
   const prefs = loadPrefs();
   prefs.settings = settings;
@@ -634,12 +745,18 @@ ipcMain.handle('settings:save', (_, settings) => {
   return true;
 });
 
+/** Return the list of available LLM provider descriptors.
+ * @returns {Array} Provider list from llm-providers module.
+ */
 ipcMain.handle('settings:get-providers', () => {
   return getProviderList();
 });
 
 // ── IPC: Companion Server ──────────────────────────────────────────────
 
+/** Return connection info for the companion server, or {enabled: false} if stopped.
+ * @returns {{enabled: boolean, port?: number, token?: string}}
+ */
 ipcMain.handle('companion:get-info', () => {
   if (!companionServer) return { enabled: false };
   return {
@@ -648,6 +765,10 @@ ipcMain.handle('companion:get-info', () => {
   };
 });
 
+/** Enable or disable the companion server, starting/stopping it as needed.
+ * @param {boolean} enabled - Whether the companion server should be running.
+ * @returns {boolean} The new enabled state.
+ */
 ipcMain.handle('companion:toggle', async (_, enabled) => {
   const prefs = loadPrefs();
   if (!prefs.settings) prefs.settings = {};
@@ -666,6 +787,9 @@ ipcMain.handle('companion:toggle', async (_, enabled) => {
   return enabled;
 });
 
+/** Rotate the companion server auth token and persist the new value.
+ * @returns {Object|null} Updated connection info, or null if the server is not running.
+ */
 ipcMain.handle('companion:regenerate-token', () => {
   if (!companionServer) return null;
   companionServer.rotateToken();
@@ -678,6 +802,10 @@ ipcMain.handle('companion:regenerate-token', () => {
   return companionServer.getConnectionInfo();
 });
 
+/** Show a native OS notification; clicking it focuses the calling window.
+ * @param {{title: string, body: string}} payload - Notification title and body text.
+ * @returns {boolean} True if notifications are supported and shown, false otherwise.
+ */
 ipcMain.handle('show-notification', (event, { title, body }) => {
   if (!Notification.isSupported()) return false;
   const notification = new Notification({ title, body });
@@ -694,6 +822,9 @@ ipcMain.handle('show-notification', (event, { title, body }) => {
 
 // ── IPC: BMAD Config ──────────────────────────────────────────────────────
 
+/** Read and parse the project's _bmad/bmm/config.yaml as a flat key/value object.
+ * @returns {Object|null} Parsed config, or null if the file does not exist or an error occurs.
+ */
 ipcMain.handle('bmad-config:read', (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return null;
@@ -720,6 +851,10 @@ ipcMain.handle('bmad-config:read', (event) => {
   }
 });
 
+/** Apply key/value updates to _bmad/bmm/config.yaml, preserving file formatting.
+ * @param {Object} updates - Map of config keys to their new values.
+ * @returns {{success: boolean}|{error: string}}
+ */
 ipcMain.handle('bmad-config:write', (event, updates) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -740,6 +875,9 @@ ipcMain.handle('bmad-config:write', (event, updates) => {
   }
 });
 
+/** Read and parse _bmad/_config/manifest.yaml as a flat key/value object.
+ * @returns {Object|null} Parsed manifest, or null if the file does not exist or an error occurs.
+ */
 ipcMain.handle('bmad-manifest:read', (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return null;
@@ -766,6 +904,10 @@ ipcMain.handle('bmad-manifest:read', (event) => {
 
 // ── IPC: Project Archiving ────────────────────────────────────────────────
 
+/** Mark a project as archived in the MRU list.
+ * @param {string} projectPath - Absolute path of the project to archive.
+ * @returns {boolean} True on success, false if the project list is absent.
+ */
 ipcMain.handle('project:archive', (_, projectPath) => {
   const prefs = loadPrefs();
   if (!Array.isArray(prefs.projects)) return false;
@@ -777,6 +919,10 @@ ipcMain.handle('project:archive', (_, projectPath) => {
   return true;
 });
 
+/** Clear the archived flag on a project in the MRU list.
+ * @param {string} projectPath - Absolute path of the project to unarchive.
+ * @returns {boolean} True on success, false if the project list is absent.
+ */
 ipcMain.handle('project:unarchive', (_, projectPath) => {
   const prefs = loadPrefs();
   if (!Array.isArray(prefs.projects)) return false;
@@ -789,9 +935,13 @@ ipcMain.handle('project:unarchive', (_, projectPath) => {
 });
 
 // ── IPC: Git ────────────────────────────────────────────────────────────
+// All git handlers delegate to a per-call GitManager(projectPath) instance.
 
 const { GitManager } = require('./lib/git-manager');
 
+/** Check whether the current project directory is inside a git repository.
+ * @returns {boolean}
+ */
 ipcMain.handle('git:is-repo', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return false;
@@ -799,6 +949,9 @@ ipcMain.handle('git:is-repo', async (event) => {
   return gm.isRepo();
 });
 
+/** Return the current git working-tree status (staged, unstaged, untracked files).
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:status', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -806,6 +959,9 @@ ipcMain.handle('git:status', async (event) => {
   return gm.status();
 });
 
+/** List all local and remote branches with current-branch indicator.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:branches', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -813,6 +969,10 @@ ipcMain.handle('git:branches', async (event) => {
   return gm.branches();
 });
 
+/** Return the commit log for the current branch.
+ * @param {number} [limit=25] - Maximum number of commits to return.
+ * @returns {Array|{error: string}}
+ */
 ipcMain.handle('git:log', async (event, limit) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -820,6 +980,10 @@ ipcMain.handle('git:log', async (event, limit) => {
   return gm.log(limit || 25);
 });
 
+/** Checkout an existing branch.
+ * @param {string} branch - Branch name to switch to.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:checkout', async (event, branch) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -827,6 +991,11 @@ ipcMain.handle('git:checkout', async (event, branch) => {
   return gm.checkout(branch);
 });
 
+/** Create a new branch, optionally from a specific start point.
+ * @param {string} name - New branch name.
+ * @param {string} [startPoint] - Commit/branch to branch from (defaults to HEAD).
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:create-branch', async (event, name, startPoint) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -834,6 +1003,9 @@ ipcMain.handle('git:create-branch', async (event, name, startPoint) => {
   return gm.createBranch(name, startPoint);
 });
 
+/** Fetch from all remotes.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:fetch', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -842,6 +1014,11 @@ ipcMain.handle('git:fetch', async (event) => {
   return { ok: true };
 });
 
+/** Pull from a remote branch.
+ * @param {string} [remote] - Remote name (e.g. 'origin').
+ * @param {string} [branch] - Branch name to pull.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:pull', async (event, remote, branch) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -849,6 +1026,11 @@ ipcMain.handle('git:pull', async (event, remote, branch) => {
   return gm.pull(remote, branch);
 });
 
+/** Push the current branch to a remote.
+ * @param {string} [remote] - Remote name (e.g. 'origin').
+ * @param {string} [branch] - Branch name to push.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:push', async (event, remote, branch) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -857,6 +1039,10 @@ ipcMain.handle('git:push', async (event, remote, branch) => {
   return { ok: true };
 });
 
+/** Merge a branch into the current branch.
+ * @param {string} branch - Branch name to merge in.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:merge', async (event, branch) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -864,6 +1050,9 @@ ipcMain.handle('git:merge', async (event, branch) => {
   return gm.merge(branch);
 });
 
+/** Abort an in-progress merge.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:abort-merge', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -872,6 +1061,11 @@ ipcMain.handle('git:abort-merge', async (event) => {
   return { ok: true };
 });
 
+// ── IPC: Git — Tags ──────────────────────────────────────────────────────
+
+/** List all git tags in the repository.
+ * @returns {Array}
+ */
 ipcMain.handle('git:tags', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return [];
@@ -879,6 +1073,11 @@ ipcMain.handle('git:tags', async (event) => {
   return gm.tags();
 });
 
+/** Create an annotated (or lightweight) tag.
+ * @param {string} name - Tag name.
+ * @param {string} [message] - Annotation message; omit for a lightweight tag.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:create-tag', async (event, name, message) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -887,6 +1086,10 @@ ipcMain.handle('git:create-tag', async (event, name, message) => {
   return { ok: true };
 });
 
+/** Delete a local tag.
+ * @param {string} name - Tag name to delete.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:delete-tag', async (event, name) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -895,6 +1098,10 @@ ipcMain.handle('git:delete-tag', async (event, name) => {
   return { ok: true };
 });
 
+/** Push a single tag to the remote.
+ * @param {string} name - Tag name to push.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:push-tag', async (event, name) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -903,6 +1110,9 @@ ipcMain.handle('git:push-tag', async (event, name) => {
   return { ok: true };
 });
 
+/** Push all local tags to the remote.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:push-all-tags', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -911,6 +1121,12 @@ ipcMain.handle('git:push-all-tags', async (event) => {
   return { ok: true };
 });
 
+// ── IPC: Git — Staging & Diff ────────────────────────────────────────────
+
+/** Open the configured git merge tool for a conflicted file.
+ * @param {string} file - Relative path of the conflicted file.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:open-merge-tool', async (event, file) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -923,6 +1139,10 @@ ipcMain.handle('git:open-merge-tool', async (event, file) => {
   }
 });
 
+/** Stage specific files.
+ * @param {string[]} files - Array of relative file paths to stage.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:stage', async (event, files) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -931,6 +1151,9 @@ ipcMain.handle('git:stage', async (event, files) => {
   return { ok: true };
 });
 
+/** Stage all modified and untracked files.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:stage-all', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -939,6 +1162,10 @@ ipcMain.handle('git:stage-all', async (event) => {
   return { ok: true };
 });
 
+/** Unstage specific files (reset HEAD).
+ * @param {string[]} files - Array of relative file paths to unstage.
+ * @returns {{ok: boolean}|{error: string}}
+ */
 ipcMain.handle('git:unstage', async (event, files) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -947,6 +1174,9 @@ ipcMain.handle('git:unstage', async (event, files) => {
   return { ok: true };
 });
 
+/** Return the combined unstaged diff for all modified files.
+ * @returns {string|{error: string}}
+ */
 ipcMain.handle('git:diff', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -954,6 +1184,11 @@ ipcMain.handle('git:diff', async (event) => {
   return gm.diff();
 });
 
+/** Return the diff for a single file (staged or unstaged).
+ * @param {string} file - Relative path of the file.
+ * @param {boolean} [staged=false] - If true, diff against the index; otherwise against the working tree.
+ * @returns {string|{error: string}}
+ */
 ipcMain.handle('git:diff-file', async (event, file, staged) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -961,6 +1196,10 @@ ipcMain.handle('git:diff-file', async (event, file, staged) => {
   return gm.diffFile(file, staged);
 });
 
+/** Create a commit with the given message from currently staged changes.
+ * @param {string} message - Commit message.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:commit', async (event, message) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -968,6 +1207,9 @@ ipcMain.handle('git:commit', async (event, message) => {
   return gm.commit(message);
 });
 
+/** Check whether the GitHub CLI (`gh`) is available on PATH.
+ * @returns {boolean}
+ */
 ipcMain.handle('git:has-gh-cli', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return false;
@@ -975,6 +1217,9 @@ ipcMain.handle('git:has-gh-cli', async (event) => {
   return gm.hasGhCli();
 });
 
+/** Return the URL of the default remote (origin).
+ * @returns {string|null}
+ */
 ipcMain.handle('git:remote-url', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return null;
@@ -982,7 +1227,11 @@ ipcMain.handle('git:remote-url', async (event) => {
   return gm.getRemoteUrl();
 });
 
-// Stash
+// ── IPC: Git — Stash ─────────────────────────────────────────────────────
+
+/** List all stash entries.
+ * @returns {Array}
+ */
 ipcMain.handle('git:stash-list', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return [];
@@ -990,6 +1239,10 @@ ipcMain.handle('git:stash-list', async (event) => {
   return gm.stashList();
 });
 
+/** Stash current changes with an optional message.
+ * @param {string} [message] - Optional stash description.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:stash', async (event, message) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -997,6 +1250,10 @@ ipcMain.handle('git:stash', async (event, message) => {
   return gm.stash(message);
 });
 
+/** Apply and remove a stash entry by index.
+ * @param {number} index - Stash list index (0 = most recent).
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:stash-pop', async (event, index) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1004,6 +1261,10 @@ ipcMain.handle('git:stash-pop', async (event, index) => {
   return gm.stashPop(index);
 });
 
+/** Drop (delete) a stash entry by index without applying it.
+ * @param {number} index - Stash list index to drop.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:stash-drop', async (event, index) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1011,7 +1272,13 @@ ipcMain.handle('git:stash-drop', async (event, index) => {
   return gm.stashDrop(index);
 });
 
-// Branch delete
+// ── IPC: Git — Branch Management ─────────────────────────────────────────
+
+/** Delete a local branch.
+ * @param {string} name - Branch name to delete.
+ * @param {boolean} [force=false] - Force-delete even if not merged.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:delete-branch', async (event, name, force) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1019,6 +1286,10 @@ ipcMain.handle('git:delete-branch', async (event, name, force) => {
   return gm.deleteBranch(name, force);
 });
 
+/** Delete a branch on the remote (push delete).
+ * @param {string} name - Remote branch name to delete.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:delete-remote-branch', async (event, name) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1026,7 +1297,12 @@ ipcMain.handle('git:delete-remote-branch', async (event, name) => {
   return gm.deleteRemoteBranch(name);
 });
 
-// Commit detail
+// ── IPC: Git — Commit Detail ─────────────────────────────────────────────
+
+/** Return the full detail (metadata + changed files) for a commit.
+ * @param {string} hash - Full or abbreviated commit hash.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:show-commit', async (event, hash) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1034,6 +1310,10 @@ ipcMain.handle('git:show-commit', async (event, hash) => {
   return gm.showCommit(hash);
 });
 
+/** Return the unified diff for an entire commit.
+ * @param {string} hash - Commit hash.
+ * @returns {string|{error: string}}
+ */
 ipcMain.handle('git:commit-diff', async (event, hash) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1041,6 +1321,11 @@ ipcMain.handle('git:commit-diff', async (event, hash) => {
   return gm.commitDiff(hash);
 });
 
+/** Return the diff for a single file within a specific commit.
+ * @param {string} hash - Commit hash.
+ * @param {string} file - Relative path of the file within the repo.
+ * @returns {string|{error: string}}
+ */
 ipcMain.handle('git:commit-file-diff', async (event, hash, file) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1048,7 +1333,12 @@ ipcMain.handle('git:commit-file-diff', async (event, hash, file) => {
   return gm.commitFileDiff(hash, file);
 });
 
-// Discard
+// ── IPC: Git — Discard & Amend ───────────────────────────────────────────
+
+/** Discard unstaged changes to a single file (restore from HEAD).
+ * @param {string} file - Relative path of the file to restore.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:discard-file', async (event, file) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1056,6 +1346,9 @@ ipcMain.handle('git:discard-file', async (event, file) => {
   return gm.discardFile(file);
 });
 
+/** Discard all unstaged changes in the working tree (hard reset to HEAD).
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:discard-all', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1063,7 +1356,10 @@ ipcMain.handle('git:discard-all', async (event) => {
   return gm.discardAll();
 });
 
-// Amend
+/** Amend the most recent commit, optionally updating its message.
+ * @param {string} [message] - New commit message; omit to keep the current message.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:amend', async (event, message) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1071,7 +1367,12 @@ ipcMain.handle('git:amend', async (event, message) => {
   return gm.amend(message);
 });
 
-// Revert
+// ── IPC: Git — Revert & Rebase ───────────────────────────────────────────
+
+/** Create a revert commit that undoes the changes introduced by a specific commit.
+ * @param {string} hash - Commit hash to revert.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:revert', async (event, hash) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1079,7 +1380,10 @@ ipcMain.handle('git:revert', async (event, hash) => {
   return gm.revert(hash);
 });
 
-// Rebase
+/** Rebase the current branch onto another branch.
+ * @param {string} branch - Target branch to rebase onto.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:rebase', async (event, branch) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1087,6 +1391,9 @@ ipcMain.handle('git:rebase', async (event, branch) => {
   return gm.rebase(branch);
 });
 
+/** Abort an in-progress rebase and restore the pre-rebase state.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:rebase-abort', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1094,6 +1401,9 @@ ipcMain.handle('git:rebase-abort', async (event) => {
   return gm.rebaseAbort();
 });
 
+/** Continue a paused rebase after resolving conflicts.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:rebase-continue', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1101,6 +1411,9 @@ ipcMain.handle('git:rebase-continue', async (event) => {
   return gm.rebaseContinue();
 });
 
+/** Check whether a rebase is currently in progress.
+ * @returns {boolean}
+ */
 ipcMain.handle('git:is-rebasing', async (event) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return false;
@@ -1108,7 +1421,13 @@ ipcMain.handle('git:is-rebasing', async (event) => {
   return gm.isRebasing();
 });
 
-// File history
+// ── IPC: Git — File History & Conflict Resolution ────────────────────────
+
+/** Return the commit history for a single file.
+ * @param {string} file - Relative file path.
+ * @param {number} [limit=25] - Maximum number of log entries to return.
+ * @returns {Array}
+ */
 ipcMain.handle('git:file-log', async (event, file, limit) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return [];
@@ -1116,7 +1435,10 @@ ipcMain.handle('git:file-log', async (event, file, limit) => {
   return gm.fileLog(file, limit);
 });
 
-// Conflict resolution
+/** Read a conflicted file and parse its conflict markers into structured sections.
+ * @param {string} file - Relative path of the conflicted file.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:read-conflict-file', async (event, file) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
@@ -1124,6 +1446,11 @@ ipcMain.handle('git:read-conflict-file', async (event, file) => {
   return gm.readConflictFile(file);
 });
 
+/** Write resolved content to a previously conflicted file and stage it.
+ * @param {string} file - Relative path of the file.
+ * @param {string} content - Resolved file content to write.
+ * @returns {Object|{error: string}}
+ */
 ipcMain.handle('git:resolve-conflict', async (event, file, content) => {
   const projectPath = getWindowProjectPath(event);
   if (!projectPath) return { error: 'No project loaded' };
