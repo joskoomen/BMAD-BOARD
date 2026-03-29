@@ -111,6 +111,18 @@ contextBridge.exposeInMainWorld('api', {
   toggleCompanion: (enabled) => ipcRenderer.invoke('companion:toggle', enabled),
   regenerateCompanionToken: () => ipcRenderer.invoke('companion:regenerate-token'),
 
+  // Sync Providers
+  syncListProviders: () => ipcRenderer.invoke('sync:list-providers'),
+  syncConfigure: (provider, config) => ipcRenderer.invoke('sync:configure', provider, config),
+  syncValidate: (provider, config) => ipcRenderer.invoke('sync:validate', provider, config),
+  syncTestConnection: (provider, config) => ipcRenderer.invoke('sync:test-connection', provider, config),
+  syncSetup: () => ipcRenderer.invoke('sync:setup'),
+  syncAll: (opts) => ipcRenderer.invoke('sync:all', opts),
+  syncPush: () => ipcRenderer.invoke('sync:push'),
+  syncPull: () => ipcRenderer.invoke('sync:pull'),
+  syncItem: (type, key) => ipcRenderer.invoke('sync:item', type, key),
+  syncStatus: () => ipcRenderer.invoke('sync:status'),
+
   // Embedded Terminal (PTY)
   terminalCreate: (opts) => ipcRenderer.invoke('terminal:create', opts || {}),
   terminalInput: (id, data) => ipcRenderer.send('terminal:input', { id, data }),
