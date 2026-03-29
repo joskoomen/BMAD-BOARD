@@ -23,9 +23,10 @@
           <span class="nav-icon">&#128421;</span>
           <span>Terminal</span>
         </li>
-        <li class="nav-item" data-view="history">
+        <li class="nav-item" data-view="history" id="nav-history">
           <span class="nav-icon">&#128452;</span>
           <span>History</span>
+          <span class="nav-pro-badge" id="history-pro-badge">PRO</span>
         </li>
         <li class="nav-item" data-view="party">
           <span class="nav-icon">&#127881;</span>
@@ -38,6 +39,7 @@
         <li class="nav-item hidden" data-view="git" id="nav-git">
           <span class="nav-icon">&#128256;</span>
           <span>Git</span>
+          <span class="nav-pro-badge" id="git-pro-badge">PRO</span>
         </li>
       </ul>
 
@@ -182,6 +184,49 @@
       </div>
 
     </main>
+
+    <!-- Upgrade to Pro Modal -->
+    <div class="modal-overlay hidden" id="upgrade-modal">
+      <div class="modal upgrade-modal">
+        <div class="modal-header">
+          <h3>Upgrade to BMAD Board Pro</h3>
+          <button class="modal-close" id="upgrade-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="upgrade-feature-desc" id="upgrade-feature-desc">Unlock all Pro features including Git integration, multi-tab terminal, session history, and more.</p>
+
+          <div class="upgrade-features-list">
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Full Git integration</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Multi-tab terminal</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> All LLM providers</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Session history</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> File versioning</div>
+            <div class="upgrade-feature-item"><span class="upgrade-check">&#10003;</span> Multi-window support</div>
+          </div>
+
+          <div class="upgrade-plan-toggle">
+            <button class="plan-btn active" id="plan-monthly" data-plan="monthly">Monthly</button>
+            <button class="plan-btn" id="plan-annual" data-plan="annual">Annual <span class="plan-save">Save 20%</span></button>
+          </div>
+
+          <button class="btn btn-primary btn-block upgrade-subscribe-btn" id="btn-subscribe">Subscribe to Pro</button>
+
+          <div class="upgrade-divider">
+            <span>or</span>
+          </div>
+
+          <div class="upgrade-license-section">
+            <button class="btn btn-ghost btn-sm" id="toggle-license-input">I have a license key</button>
+            <div class="upgrade-license-input hidden" id="license-input-group">
+              <input type="text" id="license-key-input" class="input" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX">
+              <button class="btn btn-primary btn-sm" id="btn-activate-key">Activate</button>
+            </div>
+            <p class="upgrade-license-error hidden" id="license-error"></p>
+            <p class="upgrade-license-success hidden" id="license-success">License activated! Enjoy BMAD Board Pro.</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

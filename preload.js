@@ -106,6 +106,17 @@ contextBridge.exposeInMainWorld('api', {
   gitReadConflictFile: (file) => ipcRenderer.invoke('git:read-conflict-file', file),
   gitResolveConflict: (file, content) => ipcRenderer.invoke('git:resolve-conflict', file, content),
 
+  // License
+  getLicenseStatus: () => ipcRenderer.invoke('license:status'),
+  activateLicense: (key) => ipcRenderer.invoke('license:activate', key),
+  deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
+  validateLicense: () => ipcRenderer.invoke('license:validate'),
+  openCheckout: (plan) => ipcRenderer.invoke('license:open-checkout', plan),
+  onLicenseActivated: (callback) => {
+    ipcRenderer.on('license:activated', callback);
+    return () => ipcRenderer.removeListener('license:activated', callback);
+  },
+
   // Companion Server
   getCompanionInfo: () => ipcRenderer.invoke('companion:get-info'),
   toggleCompanion: (enabled) => ipcRenderer.invoke('companion:toggle', enabled),
