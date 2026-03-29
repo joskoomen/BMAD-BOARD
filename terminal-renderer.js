@@ -309,6 +309,14 @@ function loadXtermModules() {
  * @returns {number} The new tab ID
  */
 async function createTab(slashCommand, opts) {
+  // Pro feature gate: free tier limited to 1 terminal tab
+  if (!window._isPro && tabs.length >= 1) {
+    if (typeof window.showUpgradeModal === 'function') {
+      window.showUpgradeModal('multi-tab');
+    }
+    return null;
+  }
+
   // Always ensure a claudeSessionId so every session can be resumed
   const resume = (opts && opts.resume) || false;
   const claudeSessionId = (opts && opts.claudeSessionId) || (resume ? null : crypto.randomUUID());
