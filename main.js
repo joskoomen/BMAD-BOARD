@@ -21,6 +21,8 @@ const { openClaudeWithCommand, openPartyMode } = require('./lib/terminal-launche
 const { TerminalManager } = require('./lib/terminal-manager');
 const { getProviderList } = require('./lib/llm-providers');
 const { CompanionServer, startHeartbeat } = require('./lib/companion-server');
+const { SyncEngine } = require('./lib/sync-engine');
+const { getSyncProviderList } = require('./lib/sync-providers');
 const { LicenseManager } = require('./lib/license-manager');
 
 let mainWindow;
@@ -534,6 +536,7 @@ ipcMain.handle('remove-project-from-list', (_, projectPath) => {
   const prefs = loadPrefs();
   if (!Array.isArray(prefs.projects)) return;
   prefs.projects = prefs.projects.filter(p => p.path !== projectPath);
+  syncEngineCache.delete(projectPath);
   savePrefs(prefs);
   return prefs.projects;
 });
@@ -843,6 +846,70 @@ ipcMain.handle('companion:regenerate-token', () => {
   savePrefs(prefs);
   return companionServer.getConnectionInfo();
 });
+
+// ── IPC: Sync Providers ────────────────────────────────────────────────
+
+const syncEngineCache = new Map();
+
+function getSyncEngine(event) {
+  const projectPath = windowProjectPaths.get(event.sender.id) || currentProjectPath;
+  if (!projectPath) throw new Error('No project loaded');
+  if (!syncEngineCache.has(projectPath)) {
+    syncEngineCache.set(projectPath, new SyncEngine(projectPath, scanProject));
+  }
+  return syncEngineCache.get(projectPath);
+}
+
+ipcMain.handle('sync:list-providers', () => {
+  return getSyncProviderList();
+});
+
+ipcMain.handle('sync:configure', (event, providerKey, config) => {
+  const engine = getSyncEngine(event);
+  return engine.configure(providerKey, config);
+});
+
+ipcMain.handle('sync:validate', async (event, providerKey, config) => {
+  const engine = getSyncEngine(event);
+  return engine.validate(providerKey, config);
+});
+
+ipcMain.handle('sync:test-connection', async (event, providerKey, config) => {
+  const engine = getSyncEngine(event);
+  return engine.testConnection(providerKey, config);
+});
+
+ipcMain.handle('sync:setup', async (event) => {
+  const engine = getSyncEngine(event);
+  return engine.setup();
+});
+
+ipcMain.handle('sync:all', async (event, opts) => {
+  const engine = getSyncEngine(event);
+  return engine.syncAll(opts);
+});
+
+ipcMain.handle('sync:push', async (event) => {
+  const engine = getSyncEngine(event);
+  return engine.pushAll();
+});
+
+ipcMain.handle('sync:pull', async (event) => {
+  const engine = getSyncEngine(event);
+  return engine.pullAll();
+});
+
+ipcMain.handle('sync:item', async (event, type, key) => {
+  const engine = getSyncEngine(event);
+  return engine.syncItem(type, key);
+});
+
+ipcMain.handle('sync:status', async (event) => {
+  const engine = getSyncEngine(event);
+  return engine.getSyncStatus();
+});
+
+// ── IPC: Notifications ─────────────────────────────────────────────────
 
 /** Show a native OS notification; clicking it focuses the calling window.
  * @param {{title: string, body: string}} payload - Notification title and body text.

@@ -3672,6 +3672,15 @@ async function renderSettings() {
         </div>
       </div>
 
+      <!-- Sync Providers -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">Sync Providers</h3>
+        <p class="settings-hint" style="margin-bottom:12px">Sync your epics, stories and documents to Notion, Obsidian or Linear.</p>
+        <div id="sync-section">
+          <p class="settings-hint">Loading...</p>
+        </div>
+      </div>
+
       <!-- Projects -->
       <div class="settings-section">
         <h3 class="settings-section-title">Projects</h3>
@@ -3763,6 +3772,9 @@ async function renderSettings() {
 
   // Render companion section
   renderCompanionSection();
+
+  // Render sync section
+  renderSyncSection();
 }
 
 /** Fetch companion server info and render the mobile companion sub-section inside
@@ -3848,6 +3860,156 @@ async function renderCompanionSection() {
 
   } catch (err) {
     section.innerHTML = `<p class="settings-hint" style="color:var(--danger)">Failed to load companion info</p>`;
+  }
+}
+
+async function renderSyncSection() {
+  const section = document.getElementById('sync-section');
+  if (!section) return;
+
+  try {
+    const [providers, status] = await Promise.all([
+      window.api.syncListProviders(),
+      window.api.syncStatus()
+    ]);
+
+    const currentProvider = status.provider || '';
+    const isConfigured = status.configured;
+
+    section.innerHTML = `
+      <div class="settings-field settings-field-row">
+        <label class="settings-label">Provider</label>
+        <select class="settings-select" id="sync-provider">
+          <option value="">— Select —</option>
+          ${providers.map(p => `<option value="${p.key}" ${p.key === currentProvider ? 'selected' : ''}>${p.name}</option>`).join('')}
+        </select>
+      </div>
+      <div id="sync-config-fields"></div>
+      <div id="sync-actions" style="margin-top:12px">
+        ${isConfigured ? `
+          <div class="sync-status-bar">
+            <span class="sync-status-badge sync-status-${isConfigured ? 'connected' : 'disconnected'}">
+              ${isConfigured ? 'Configured' : 'Not configured'}
+            </span>
+            ${status.lastFullSync ? `<span class="settings-hint">Last sync: ${new Date(status.lastFullSync).toLocaleString()}</span>` : ''}
+            ${status.counts ? `<span class="settings-hint">Synced: ${status.counts.epics} epics, ${status.counts.stories} stories, ${status.counts.documents} docs</span>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-primary btn-sm" id="btn-sync-push">Push to ${providers.find(p => p.key === currentProvider)?.name || 'Remote'}</button>
+            <button class="btn btn-ghost btn-sm" id="btn-sync-pull">Pull from Remote</button>
+            <button class="btn btn-ghost btn-sm" id="btn-sync-full">Full Sync</button>
+            <button class="btn btn-ghost btn-sm" id="btn-sync-test">Test Connection</button>
+          </div>
+          <div id="sync-result" style="margin-top:8px"></div>
+        ` : ''}
+      </div>
+    `;
+
+    // Render config fields for selected provider
+    const renderConfigFields = (providerKey) => {
+      const fieldsContainer = document.getElementById('sync-config-fields');
+      const provider = providers.find(p => p.key === providerKey);
+      if (!provider || !provider.configFields) {
+        fieldsContainer.innerHTML = '';
+        return;
+      }
+      const existingConfig = status.config || {};
+      fieldsContainer.innerHTML = provider.configFields.map(f => `
+        <div class="settings-field settings-field-row">
+          <label class="settings-label">${f.label}</label>
+          <input type="${f.type === 'password' ? 'password' : 'text'}"
+                 class="settings-input" id="sync-cfg-${f.key}"
+                 value="${existingConfig[f.key] && f.type !== 'password' ? existingConfig[f.key] : ''}"
+                 placeholder="${f.hint || ''}" />
+        </div>
+      `).join('') + `
+        <div style="margin-top:8px">
+          <button class="btn btn-primary btn-sm" id="btn-sync-configure">Save & Configure</button>
+          <button class="btn btn-ghost btn-sm" id="btn-sync-setup">Setup Remote</button>
+          <span id="sync-configure-status" class="settings-save-status"></span>
+        </div>
+      `;
+
+      document.getElementById('btn-sync-configure')?.addEventListener('click', async () => {
+        const config = { ...existingConfig };
+        for (const f of provider.configFields) {
+          const input = document.getElementById(`sync-cfg-${f.key}`);
+          if (input && input.value) config[f.key] = input.value;
+        }
+        const statusEl = document.getElementById('sync-configure-status');
+        try {
+          await window.api.syncConfigure(providerKey, config);
+          statusEl.textContent = 'Saved!';
+          statusEl.style.color = 'var(--success)';
+          setTimeout(() => renderSyncSection(), 1000);
+        } catch (err) {
+          statusEl.textContent = err.message;
+          statusEl.style.color = 'var(--danger)';
+        }
+      });
+
+      document.getElementById('btn-sync-setup')?.addEventListener('click', async () => {
+        const statusEl = document.getElementById('sync-configure-status');
+        try {
+          statusEl.textContent = 'Setting up...';
+          statusEl.style.color = 'var(--text-secondary)';
+          const result = await window.api.syncSetup();
+          statusEl.textContent = 'Remote setup complete!';
+          statusEl.style.color = 'var(--success)';
+          setTimeout(() => renderSyncSection(), 1500);
+        } catch (err) {
+          statusEl.textContent = err.message;
+          statusEl.style.color = 'var(--danger)';
+        }
+      });
+    };
+
+    if (currentProvider) renderConfigFields(currentProvider);
+
+    document.getElementById('sync-provider').addEventListener('change', (e) => {
+      renderConfigFields(e.target.value);
+    });
+
+    // Sync action buttons
+    const wireBtn = (id, action) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const resultEl = document.getElementById('sync-result');
+        btn.disabled = true;
+        resultEl.innerHTML = '<span class="settings-hint">Syncing...</span>';
+        try {
+          const result = await action();
+          const msg = result.errors?.length
+            ? `<span style="color:var(--danger)">${result.errors.join(', ')}</span>`
+            : `<span style="color:var(--success)">Done! Pushed: ${result.pushed || 0}, Pulled: ${result.pulled || 0}${result.conflicts?.length ? `, Conflicts: ${result.conflicts.length}` : ''}</span>`;
+          resultEl.innerHTML = msg;
+          setTimeout(() => renderSyncSection(), 3000);
+        } catch (err) {
+          resultEl.innerHTML = `<span style="color:var(--danger)">${err.message}</span>`;
+        }
+        btn.disabled = false;
+      });
+    };
+
+    wireBtn('btn-sync-push', () => window.api.syncPush());
+    wireBtn('btn-sync-pull', () => window.api.syncPull());
+    wireBtn('btn-sync-full', () => window.api.syncAll());
+
+    document.getElementById('btn-sync-test')?.addEventListener('click', async () => {
+      const resultEl = document.getElementById('sync-result');
+      try {
+        const res = await window.api.syncTestConnection();
+        resultEl.innerHTML = res.ok
+          ? `<span style="color:var(--success)">${res.message}</span>`
+          : `<span style="color:var(--danger)">${res.message}</span>`;
+      } catch (err) {
+        resultEl.innerHTML = `<span style="color:var(--danger)">${err.message}</span>`;
+      }
+    });
+
+  } catch (err) {
+    section.innerHTML = `<p class="settings-hint" style="color:var(--danger)">Failed to load sync providers</p>`;
   }
 }
 
