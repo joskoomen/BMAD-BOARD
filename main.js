@@ -536,6 +536,7 @@ ipcMain.handle('remove-project-from-list', (_, projectPath) => {
   const prefs = loadPrefs();
   if (!Array.isArray(prefs.projects)) return;
   prefs.projects = prefs.projects.filter(p => p.path !== projectPath);
+  syncEngineCache.delete(projectPath);
   savePrefs(prefs);
   return prefs.projects;
 });
@@ -848,10 +849,15 @@ ipcMain.handle('companion:regenerate-token', () => {
 
 // ── IPC: Sync Providers ────────────────────────────────────────────────
 
+const syncEngineCache = new Map();
+
 function getSyncEngine(event) {
   const projectPath = windowProjectPaths.get(event.sender.id) || currentProjectPath;
   if (!projectPath) throw new Error('No project loaded');
-  return new SyncEngine(projectPath, scanProject);
+  if (!syncEngineCache.has(projectPath)) {
+    syncEngineCache.set(projectPath, new SyncEngine(projectPath, scanProject));
+  }
+  return syncEngineCache.get(projectPath);
 }
 
 ipcMain.handle('sync:list-providers', () => {

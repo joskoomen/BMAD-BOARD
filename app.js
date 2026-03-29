@@ -3933,7 +3933,7 @@ async function renderSyncSection() {
       document.getElementById('btn-sync-configure')?.addEventListener('click', async () => {
         const config = {};
         for (const f of provider.configFields) {
-          const input = document.getElementById(\`sync-cfg-\${f.key}\`);
+          const input = document.getElementById(`sync-cfg-${f.key}`);
           if (input && input.value) config[f.key] = input.value;
         }
         const statusEl = document.getElementById('sync-configure-status');
@@ -3986,7 +3986,7 @@ async function renderSyncSection() {
           resultEl.innerHTML = msg;
           setTimeout(() => renderSyncSection(), 3000);
         } catch (err) {
-          resultEl.innerHTML = \`<span style="color:var(--danger)">\${err.message}</span>\`;
+          resultEl.innerHTML = `<span style="color:var(--danger)">${err.message}</span>`;
         }
         btn.disabled = false;
       });
@@ -4001,15 +4001,15 @@ async function renderSyncSection() {
       try {
         const res = await window.api.syncTestConnection();
         resultEl.innerHTML = res.ok
-          ? \`<span style="color:var(--success)">\${res.message}</span>\`
-          : \`<span style="color:var(--danger)">\${res.message}</span>\`;
+          ? `<span style="color:var(--success)">${res.message}</span>`
+          : `<span style="color:var(--danger)">${res.message}</span>`;
       } catch (err) {
-        resultEl.innerHTML = \`<span style="color:var(--danger)">\${err.message}</span>\`;
+        resultEl.innerHTML = `<span style="color:var(--danger)">${err.message}</span>`;
       }
     });
 
   } catch (err) {
-    section.innerHTML = \`<p class="settings-hint" style="color:var(--danger)">Failed to load sync providers</p>\`;
+    section.innerHTML = `<p class="settings-hint" style="color:var(--danger)">Failed to load sync providers</p>`;
   }
 }
 

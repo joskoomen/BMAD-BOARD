@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import os from 'os';
+import fs from 'fs';
 import {
   SYNC_PROVIDERS,
   getSyncProvider,
@@ -108,8 +109,13 @@ describe('obsidian testConnection', () => {
   });
 
   it('succeeds if vault path exists', async () => {
-    const result = await getSyncProvider('obsidian').testConnection({ vaultPath: '/tmp' });
-    expect(result.ok).toBe(true);
+    const tmpDir = fs.mkdtempSync(os.tmpdir() + '/obsidian-test-');
+    try {
+      const result = await getSyncProvider('obsidian').testConnection({ vaultPath: tmpDir });
+      expect(result.ok).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
