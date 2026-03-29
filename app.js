@@ -85,6 +85,7 @@ let previousStoryStates = {};  // slug -> status, for change detection
 let pollTimer = null;
 let isGitRepo = false;         // whether the current project is a git repo
 let gitAutoFetchTimer = null;  // auto-fetch interval timer
+let licenseStatus = { active: false, plan: null }; // Pro license state
 
 // ── Phase Config (mirror of lib/phase-commands.js for renderer) ─────────
 
@@ -98,14 +99,256 @@ const PHASES = {
 
 const PHASE_ORDER = ['backlog', 'ready-for-dev', 'in-progress', 'review', 'done'];
 
+// ── Pro License ────────────────────────────────────────────────────────
+
+const PRO_FEATURES = {
+  'git': 'Git integration lets you manage branches, commits, merges, and more — all from within BMAD Board.',
+  'session-history': 'Session history lets you track and resume your development sessions across stories.',
+  'multi-tab': 'Multi-tab terminal lets you run multiple terminal sessions side by side.',
+  'multi-window': 'Multi-window lets you open several BMAD Board windows simultaneously.',
+  'providers': 'Access all 5 LLM providers: Claude Code, Codex, Cursor, Aider, and OpenCode.',
+  'file-versioning': 'File versioning automatically snapshots your files before each save.',
+  'notifications': 'Get OS notifications when story phases change.',
+};
+
+/** Check if current license is active (Pro). */
+function isPro() {
+  return licenseStatus.active === true;
+}
+
+/**
+ * Require Pro for a feature — if not Pro, show upgrade modal.
+ * @param {string} featureName - Key from PRO_FEATURES
+ * @returns {boolean} true if Pro, false if blocked
+ */
+function requirePro(featureName) {
+  if (isPro()) return true;
+  showUpgradeModal(featureName);
+  return false;
+}
+
+/** Initialize license status and update UI badges. */
+async function initLicense() {
+  try {
+    licenseStatus = await window.api.getLicenseStatus();
+  } catch {
+    licenseStatus = { active: false, plan: null };
+  }
+  updateProBadges();
+
+  // Listen for activation events from checkout window
+  window.api.onLicenseActivated(() => {
+    window.api.getLicenseStatus().then(status => {
+      licenseStatus = status;
+      updateProBadges();
+    });
+  });
+
+  // Expose for terminal-renderer
+  window._isPro = isPro();
+}
+
+/** Show/hide Pro badges in nav based on license status. */
+function updateProBadges() {
+  const pro = isPro();
+  window._isPro = pro;
+
+  const gitBadge = document.getElementById('git-pro-badge');
+  const historyBadge = document.getElementById('history-pro-badge');
+  const navGit = document.getElementById('nav-git');
+  const navHistory = document.getElementById('nav-history');
+
+  if (gitBadge) gitBadge.classList.toggle('hidden', pro);
+  if (historyBadge) historyBadge.classList.toggle('hidden', pro);
+  if (navGit) navGit.classList.toggle('pro-locked', !pro);
+  if (navHistory) navHistory.classList.toggle('pro-locked', !pro);
+}
+
+/** Show the upgrade modal with context about which feature was requested. */
+function showUpgradeModal(featureName) {
+  const modal = document.getElementById('upgrade-modal');
+  const desc = document.getElementById('upgrade-feature-desc');
+  if (!modal) return;
+
+  if (featureName && PRO_FEATURES[featureName]) {
+    desc.textContent = PRO_FEATURES[featureName];
+  } else {
+    desc.textContent = 'Unlock all Pro features including Git integration, multi-tab terminal, session history, and more.';
+  }
+
+  // Reset state
+  const licenseGroup = document.getElementById('license-input-group');
+  const licenseError = document.getElementById('license-error');
+  const licenseSuccess = document.getElementById('license-success');
+  const trialSection = document.getElementById('trial-section');
+  if (licenseGroup) licenseGroup.classList.add('hidden');
+  if (licenseError) licenseError.classList.add('hidden');
+  if (licenseSuccess) licenseSuccess.classList.add('hidden');
+
+  // Hide trial if already used (expired or active)
+  if (trialSection) {
+    trialSection.classList.toggle('hidden', licenseStatus.trialUsed === true);
+  }
+
+  modal.classList.remove('hidden');
+}
+
+/** Hide the upgrade modal. */
+function hideUpgradeModal() {
+  const modal = document.getElementById('upgrade-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+/** Setup upgrade modal event handlers. */
+function setupUpgradeModal() {
+  // Close button
+  const closeBtn = document.getElementById('upgrade-modal-close');
+  if (closeBtn) closeBtn.addEventListener('click', hideUpgradeModal);
+
+  // Click outside to close
+  const modal = document.getElementById('upgrade-modal');
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) hideUpgradeModal();
+    });
+  }
+
+  // Plan toggle
+  const monthlyBtn = document.getElementById('plan-monthly');
+  const annualBtn = document.getElementById('plan-annual');
+  if (monthlyBtn && annualBtn) {
+    monthlyBtn.addEventListener('click', () => {
+      monthlyBtn.classList.add('active');
+      annualBtn.classList.remove('active');
+    });
+    annualBtn.addEventListener('click', () => {
+      annualBtn.classList.add('active');
+      monthlyBtn.classList.remove('active');
+    });
+  }
+
+  // Subscribe button
+  const subscribeBtn = document.getElementById('btn-subscribe');
+  if (subscribeBtn) {
+    subscribeBtn.addEventListener('click', async () => {
+      const plan = document.querySelector('.plan-btn.active')?.dataset.plan || 'monthly';
+      subscribeBtn.disabled = true;
+      subscribeBtn.textContent = 'Opening checkout...';
+      try {
+        const result = await window.api.openCheckout(plan);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          hideUpgradeModal();
+          showToast('Welcome to BMAD Board Pro!', 'success');
+        } else if (result.error && result.error !== 'Checkout window closed') {
+          showToast(result.error, 'error');
+        }
+      } catch (err) {
+        showToast('Failed to open checkout', 'error');
+      }
+      subscribeBtn.disabled = false;
+      subscribeBtn.textContent = 'Subscribe to Pro';
+    });
+  }
+
+  // Toggle license key input
+  const toggleBtn = document.getElementById('toggle-license-input');
+  const licenseGroup = document.getElementById('license-input-group');
+  if (toggleBtn && licenseGroup) {
+    toggleBtn.addEventListener('click', () => {
+      licenseGroup.classList.toggle('hidden');
+    });
+  }
+
+  // Activate license key
+  const activateBtn = document.getElementById('btn-activate-key');
+  const keyInput = document.getElementById('license-key-input');
+  const errorEl = document.getElementById('license-error');
+  const successEl = document.getElementById('license-success');
+  if (activateBtn && keyInput) {
+    activateBtn.addEventListener('click', async () => {
+      const key = keyInput.value.trim();
+      if (!key) return;
+
+      activateBtn.disabled = true;
+      activateBtn.textContent = 'Activating...';
+      if (errorEl) errorEl.classList.add('hidden');
+      if (successEl) successEl.classList.add('hidden');
+
+      try {
+        const result = await window.api.activateLicense(key);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          if (successEl) successEl.classList.remove('hidden');
+          setTimeout(() => hideUpgradeModal(), 1500);
+          showToast('Welcome to BMAD Board Pro!', 'success');
+        } else {
+          if (errorEl) {
+            errorEl.textContent = result.error || 'Activation failed';
+            errorEl.classList.remove('hidden');
+          }
+        }
+      } catch {
+        if (errorEl) {
+          errorEl.textContent = 'Network error — please try again';
+          errorEl.classList.remove('hidden');
+        }
+      }
+      activateBtn.disabled = false;
+      activateBtn.textContent = 'Activate';
+    });
+  }
+
+  // Start trial
+  const trialBtn = document.getElementById('btn-start-trial');
+  const trialEmail = document.getElementById('trial-email-input');
+  if (trialBtn && trialEmail) {
+    trialBtn.addEventListener('click', async () => {
+      const email = trialEmail.value.trim();
+      if (!email || !email.includes('@')) {
+        showToast('Please enter a valid email address', 'error');
+        return;
+      }
+
+      trialBtn.disabled = true;
+      trialBtn.textContent = 'Starting...';
+
+      try {
+        const result = await window.api.startTrial(email);
+        if (result.success) {
+          licenseStatus = await window.api.getLicenseStatus();
+          updateProBadges();
+          hideUpgradeModal();
+          showToast('Pro trial started — 14 days free!', 'success');
+        } else {
+          showToast(result.error || 'Could not start trial', 'error');
+        }
+      } catch {
+        showToast('Failed to start trial', 'error');
+      }
+      trialBtn.disabled = false;
+      trialBtn.textContent = 'Start Free Trial';
+    });
+  }
+}
+
+// Expose for terminal-renderer
+window.showUpgradeModal = showUpgradeModal;
+
 // ── Init ────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Load license status first (affects UI rendering)
+  await initLicense();
+
   setupNavigation();
   setupKeyboardShortcuts();
   setupProjectSelector();
   setupSplitResize();
   setupToastContainer();
+  setupUpgradeModal();
 
   // Try loading last project
   const data = await window.api.loadLastProject();
@@ -124,6 +367,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ── Split Pane Resize ────────────────────────────────────────────────────
 
+/** Set up the drag-to-resize handle between the top content pane and the bottom terminal pane.
+ * Tracks mousedown/mousemove/mouseup to compute a flex-height percentage and refits the
+ * active terminal after each drag.
+ */
 function setupSplitResize() {
   const handle = document.getElementById('split-handle');
   const splitLayout = document.getElementById('split-layout');
@@ -171,6 +418,7 @@ function setupSplitResize() {
 
 // ── Navigation ──────────────────────────────────────────────────────────
 
+/** Wire click handlers for all sidebar nav items and the "Add Epic / Open Project" button. */
 function setupNavigation() {
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => {
@@ -186,8 +434,10 @@ function setupNavigation() {
       } else if (view === 'documents') {
         if (projectData) sv('documents');
       } else if (view === 'history') {
+        if (!requirePro('session-history')) return;
         sv('history');
       } else if (view === 'git') {
+        if (!requirePro('git')) return;
         if (isGitRepo) sv('git');
       } else if (view === 'terminal') {
         sv('terminal');
@@ -198,6 +448,9 @@ function setupNavigation() {
   document.getElementById('btn-add-epic').addEventListener('click', openProject);
 }
 
+/** Register global keyboard shortcuts (Cmd+O to open project, Escape to go back,
+ * Cmd+R to refresh, Cmd+N for new window) and listen for the show-settings IPC event.
+ */
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
     // Cmd+O = Open project
@@ -217,7 +470,7 @@ function setupKeyboardShortcuts() {
     // Cmd+N = new window (handled by menu accelerator, but keep as fallback)
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'n') {
       e.preventDefault();
-      window.api.newWindow();
+      if (requirePro('multi-window')) window.api.newWindow();
     }
   });
 
@@ -227,6 +480,12 @@ function setupKeyboardShortcuts() {
   });
 }
 
+/** Prompt the user to open a project folder via the native file dialog.
+ * If a project is already loaded, offers to open the new one in a new window instead.
+ * On success, loads the project data, refreshes the project list, detects git, and
+ * navigates to the Epics view. On failure, shows the welcome screen with a warning.
+ * @returns {Promise<void>}
+ */
 async function openProject() {
   // If a project is already loaded, ask whether to open in a new window
   if (projectData) {
@@ -255,6 +514,10 @@ async function openProject() {
   startPhasePoller();
 }
 
+/** Re-scan the current project and re-render whichever view is active (epics, epic-detail,
+ * or documents). Does nothing if no project is loaded.
+ * @returns {Promise<void>}
+ */
 async function refreshProject() {
   if (!projectData) return;
   const data = await window.api.scanProject();
@@ -270,6 +533,11 @@ async function refreshProject() {
 
 // ── Git Repo Detection ──────────────────────────────────────────────────
 
+/** Detect whether the current project directory is a git repository and update the
+ * `isGitRepo` flag and the visibility of the git nav item accordingly.
+ * Starts the auto-fetch timer if git is detected.
+ * @returns {Promise<void>}
+ */
 async function detectGitRepo() {
   try {
     isGitRepo = await window.api.gitIsRepo();
@@ -283,6 +551,11 @@ async function detectGitRepo() {
   if (isGitRepo) startGitAutoFetch();
 }
 
+/** Start (or restart) the periodic git auto-fetch timer using the interval from settings.
+ * Silently refreshes the git view if it is currently active. A value of 0 disables
+ * auto-fetch. Any previously running timer is stopped first.
+ * @returns {Promise<void>}
+ */
 async function startGitAutoFetch() {
   stopGitAutoFetch();
   try {
@@ -303,6 +576,7 @@ async function startGitAutoFetch() {
   } catch { /* no settings yet */ }
 }
 
+/** Clear the git auto-fetch interval timer if one is running. */
 function stopGitAutoFetch() {
   if (gitAutoFetchTimer) {
     clearInterval(gitAutoFetchTimer);
@@ -312,10 +586,19 @@ function stopGitAutoFetch() {
 
 // ── Git View ────────────────────────────────────────────────────────────
 
+/** Escape HTML special characters to prevent XSS when inserting arbitrary strings into markup.
+ * @param {string} str - Raw string to escape.
+ * @returns {string} HTML-safe string with &, <, and > replaced by entities.
+ */
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Convert a unified diff string into HTML with color-coded addition, deletion, and hunk spans.
+ * @param {string} diff - Raw unified diff text.
+ * @returns {string} HTML string where added lines have class `git-diff-add`, removed lines
+ *   have `git-diff-del`, and hunk headers have `git-diff-hunk`.
+ */
 function formatDiff(diff) {
   return diff.split('\n').map(line => {
     const escaped = escapeHtml(line);
@@ -330,9 +613,10 @@ function formatDiff(diff) {
   }).join('\n');
 }
 
-/**
- * Parse git conflict markers into structured blocks.
- * Returns array of { type: 'clean'|'conflict', content, ours, theirs }
+/** Parse git conflict markers in a file's content into structured blocks.
+ * @param {string} content - Raw file content containing `<<<<<<<`/`=======`/`>>>>>>>` markers.
+ * @returns {Array<{type: 'clean'|'conflict', content?: string, ours?: string, theirs?: string}>}
+ *   Array of blocks — clean blocks have a `content` string; conflict blocks have `ours` and `theirs`.
  */
 function parseConflicts(content) {
   const blocks = [];
@@ -382,8 +666,13 @@ function parseConflicts(content) {
   return blocks;
 }
 
-/**
- * Render the conflict viewer HTML for a file.
+/** Build the HTML for the interactive conflict resolution viewer.
+ * Renders clean sections (abbreviated if long) and side-by-side conflict blocks
+ * with "Accept Ours / Both / Theirs" buttons and a save button.
+ * @param {string} fileName - Display name of the conflicted file.
+ * @param {Array<{type: string, content?: string, ours?: string, theirs?: string}>} blocks
+ *   Parsed conflict blocks as returned by `parseConflicts`.
+ * @returns {string} HTML string to inject into the conflict viewer element.
  */
 function renderConflictViewer(fileName, blocks) {
   let html = `<div class="git-diff-header">
@@ -435,18 +724,31 @@ function renderConflictViewer(fileName, blocks) {
   return html;
 }
 
+/** Put a git action button into a loading/disabled state with a spinner.
+ * @param {HTMLButtonElement} btn - The button element to update.
+ * @param {string} label - Text to display next to the spinner.
+ */
 function gitBtnLoading(btn, label) {
   btn.disabled = true;
   btn.innerHTML = `<span class="git-spinner"></span> ${label}`;
   btn.classList.add('git-btn-loading');
 }
 
+/** Restore a git action button to its normal enabled state after an operation completes.
+ * @param {HTMLButtonElement} btn - The button element to restore.
+ * @param {string} label - Label text to restore on the button.
+ */
 function gitBtnDone(btn, label) {
   btn.disabled = false;
   btn.textContent = label;
   btn.classList.remove('git-btn-loading');
 }
 
+/** Format a date string as a human-readable relative time (e.g. "5m ago", "3d ago").
+ * @param {string} dateStr - ISO 8601 date string or any string parseable by `new Date()`.
+ * @returns {string} Relative time label such as "just now", "12m ago", "2h ago", "4d ago",
+ *   or "3mo ago".
+ */
 function formatTimeAgo(dateStr) {
   const now = new Date();
   const date = new Date(dateStr);
@@ -462,6 +764,12 @@ function formatTimeAgo(dateStr) {
   return `${months}mo ago`;
 }
 
+/** Fetch all git data (branches, status, log, tags, stashes, rebase state) in parallel and
+ * render the full git view into `#git-content`, including the branch sidebar, staged/unstaged
+ * file panels, commit box, stash list, recent commits, tags, and (if `gh` is available) the
+ * pull-request form. Preserves any commit message the user was typing.
+ * @returns {Promise<void>}
+ */
 async function renderGitView() {
   const container = document.getElementById('git-content');
   if (!container) return;
@@ -865,7 +1173,11 @@ async function renderGitView() {
   }
 }
 
-/** Build the final commit message, applying conventional commit prefix if enabled. */
+/** Build the final commit message from the textarea and optional conventional commit fields.
+ * If the conventional commit toggle is checked, prepends `type(scope): ` to the message
+ * unless it already starts with that prefix.
+ * @returns {string} The complete commit message, or an empty string if the textarea is empty.
+ */
 function buildCommitMessage() {
   const msg = document.getElementById('git-commit-message')?.value?.trim();
   if (!msg) return '';
@@ -881,6 +1193,12 @@ function buildCommitMessage() {
 
 // ── Git Drag & Drop Merge ───────────────────────────────────────────────
 
+/** Wire drag-and-drop merge onto the current-branch (HEAD) drop target inside the branch
+ * sidebar. Dragging any non-current branch onto the HEAD item triggers a merge confirmation
+ * and calls `performMerge`.
+ * @param {HTMLElement} container - The sidebar element that contains all branch items.
+ * @param {string} currentBranch - Name of the currently checked-out branch.
+ */
 function setupBranchDragDrop(container, currentBranch) {
   // Drag start
   container.addEventListener('dragstart', (e) => {
@@ -922,6 +1240,12 @@ function setupBranchDragDrop(container, currentBranch) {
   });
 }
 
+/** Merge a source branch into the current branch via the git IPC API, then refresh the git
+ * view. Shows a success, warning (conflicts), or error toast as appropriate.
+ * @param {string} branch - Name of the source branch to merge in.
+ * @param {string} currentBranch - Name of the branch being merged into (for the toast message).
+ * @returns {Promise<void>}
+ */
 async function performMerge(branch, currentBranch) {
   try {
     const result = await window.api.gitMerge(branch);
@@ -942,6 +1266,14 @@ async function performMerge(branch, currentBranch) {
 
 let gitContextMenu = null;
 
+/** Display a floating context menu near the given screen coordinates with git actions for
+ * a branch (checkout, merge, rebase, delete). Only actions valid for the branch type
+ * (local vs. remote, current vs. other) are shown. Closes on any outside click.
+ * @param {number} x - Horizontal position in viewport pixels.
+ * @param {number} y - Vertical position in viewport pixels.
+ * @param {string} branch - The branch the context menu was opened for.
+ * @param {string} currentBranch - The currently checked-out branch name.
+ */
 function showGitContextMenu(x, y, branch, currentBranch) {
   removeGitContextMenu();
 
@@ -1050,6 +1382,7 @@ function showGitContextMenu(x, y, branch, currentBranch) {
   }, 0);
 }
 
+/** Remove the currently open git context menu from the DOM, if any. */
 function removeGitContextMenu() {
   if (gitContextMenu) {
     gitContextMenu.remove();
@@ -1819,6 +2152,9 @@ document.addEventListener('click', async (e) => {
 
 // ── Toast Notifications ─────────────────────────────────────────────────
 
+/** Create the `#toast-container` element and append it to `<body>` if it does not already
+ * exist. Must be called once before any `showToast` calls.
+ */
 function setupToastContainer() {
   if (document.getElementById('toast-container')) return;
   const container = document.createElement('div');
@@ -1826,6 +2162,11 @@ function setupToastContainer() {
   document.body.appendChild(container);
 }
 
+/** Show a transient toast notification that slides in and auto-dismisses after a timeout.
+ * @param {string} message - Text content to display in the toast.
+ * @param {'info'|'success'|'warning'|'error'|'phase'} [type='info'] - Visual style and icon.
+ * @param {number} [duration=5000] - Milliseconds before the toast begins its exit animation.
+ */
 function showToast(message, type = 'info', duration = 5000) {
   const container = document.getElementById('toast-container');
   if (!container) return;
@@ -1854,6 +2195,9 @@ function showToast(message, type = 'info', duration = 5000) {
 
 // ── Phase Change Poller ─────────────────────────────────────────────────
 
+/** Capture the current status of every story across all epics into `previousStoryStates`.
+ * Called after loading or refreshing project data so that subsequent polls can detect changes.
+ */
 function snapshotStoryStates() {
   previousStoryStates = {};
   if (!projectData || !projectData.epics) return;
@@ -1864,11 +2208,21 @@ function snapshotStoryStates() {
   }
 }
 
+/** Fetch the notification sub-object from persisted settings, with safe defaults.
+ * @returns {Promise<{toast: boolean, os: boolean, sound: boolean, pollInterval: number}>}
+ *   Notification preferences.
+ */
 async function getNotificationSettings() {
   const settings = await window.api.getSettings();
   return settings.notifications || { toast: true, os: true, sound: false, pollInterval: 30 };
 }
 
+/** Scan the current project for story status changes since the last snapshot.
+ * For each changed story, re-renders the active view and fires toast and/or OS
+ * notifications according to user preferences. Updates `projectData` and snapshots
+ * the new state on every poll, regardless of whether changes were found.
+ * @returns {Promise<void>}
+ */
 async function pollForPhaseChanges() {
   if (!projectData) return;
 
@@ -1929,6 +2283,9 @@ async function pollForPhaseChanges() {
   }
 }
 
+/** Play a short 880 Hz sine-wave notification chime using the Web Audio API.
+ * Silently no-ops if the Audio API is unavailable or throws.
+ */
 function playNotificationSound() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1945,6 +2302,10 @@ function playNotificationSound() {
   } catch { /* audio not available */ }
 }
 
+/** Start (or restart) the periodic phase-change poll timer using the configured poll interval.
+ * Stops any existing timer first, then reads the interval from notification settings and
+ * schedules `pollForPhaseChanges` accordingly.
+ */
 function startPhasePoller() {
   stopPhasePoller();
   getNotificationSettings().then(settings => {
@@ -1953,6 +2314,7 @@ function startPhasePoller() {
   });
 }
 
+/** Clear the phase-change poll interval timer if one is running. */
 function stopPhasePoller() {
   if (pollTimer) {
     clearInterval(pollTimer);
@@ -1963,6 +2325,13 @@ function stopPhasePoller() {
 // ── View Router ─────────────────────────────────────────────────────────
 
 window.showView = showView;
+/** Switch the active content view and update navigation highlight and split-pane layout.
+ * Views `'git'` and `'settings'` hide the terminal pane; `'terminal'` hides the top pane;
+ * all other views show the standard split layout. Calls the appropriate render function
+ * for the selected view.
+ * @param {'welcome'|'epics'|'epic-detail'|'documents'|'party'|'history'|'git'|'terminal'|'settings'} view
+ *   Identifier of the view to activate.
+ */
 function showView(view) {
   currentView = view;
 
@@ -2037,6 +2406,9 @@ function showView(view) {
 
 // ── Welcome Screen ──────────────────────────────────────────────────────
 
+/** Render the welcome screen into `#view-epics`, showing the app name, tagline, and
+ * an "Open Project Folder" button. Also creates a placeholder for warning messages.
+ */
 function renderWelcome() {
   const container = document.getElementById('view-epics');
   container.classList.add('active');
@@ -2050,6 +2422,9 @@ function renderWelcome() {
   `;
 }
 
+/** Display a warning message in the `#welcome-warning` element on the welcome screen.
+ * @param {string} message - Warning text to show (rendered as innerHTML inside a `.warning-box`).
+ */
 function showWarning(message) {
   const el = document.getElementById('welcome-warning');
   if (el) {
@@ -2059,6 +2434,11 @@ function showWarning(message) {
 
 // ── Epics Grid ──────────────────────────────────────────────────────────
 
+/** Render the Epics view header (title, search input, project switcher, refresh button)
+ * and then delegate to `renderEpicCards` to populate the grid.
+ * Does nothing if no project data is loaded.
+ * @returns {Promise<void>}
+ */
 async function renderEpics() {
   if (!projectData) return;
 
@@ -2083,6 +2463,10 @@ async function renderEpics() {
   renderEpicCards();
 }
 
+/** Populate or rebuild the `#epics-grid` with one card per epic, applying the current
+ * `searchQuery` filter. Builds the full view scaffold first if the grid element is absent.
+ * @returns {Promise<void>}
+ */
 async function renderEpicCards() {
   const grid = document.getElementById('epics-grid');
   if (!grid) {
@@ -2148,6 +2532,9 @@ window.openEpic = function(epicNumber) {
   showView('epic-detail');
 };
 
+/** Render the Epic Detail view for `currentEpic`, including the back button, epic header,
+ * per-story cards, and (if present) the retrospective card.
+ */
 function renderEpicDetail() {
   if (!currentEpic) return;
 
@@ -2183,6 +2570,18 @@ function renderEpicDetail() {
   }
 }
 
+/** Generate the HTML for a single story card, including the phase-pill progress bar,
+ * expand/collapse toggle, optional inline markdown editor, and launch button.
+ * @param {object} story - Story object from the BMAD scanner result.
+ * @param {string} story.slug - Unique story identifier (e.g. `"2-5-5"`).
+ * @param {string} story.title - Human-readable story title.
+ * @param {string} story.status - Current phase key (e.g. `"in-progress"`).
+ * @param {string} [story.filePath] - Absolute path to the story markdown file.
+ * @param {string} [story.content] - Raw markdown content of the story file.
+ * @param {number} story.epicNumber - Parent epic number.
+ * @param {number} story.storyNumber - Story number within the epic.
+ * @returns {string} HTML string for the story card element.
+ */
 function renderStoryCard(story) {
   const isExpanded = expandedStories[story.slug] || false;
   const phaseIndex = PHASE_ORDER.indexOf(story.status);
@@ -2265,6 +2664,16 @@ function renderStoryCard(story) {
   `;
 }
 
+/** Generate the HTML for the retrospective card shown at the bottom of an epic detail view.
+ * Handles absent retro files gracefully and supports rendered/edit/raw modes like story cards.
+ * @param {object} epic - Epic object from the BMAD scanner result.
+ * @param {number} epic.number - Epic number.
+ * @param {object} [epic.retrospective] - Retrospective data, if present.
+ * @param {string} [epic.retrospective.content] - Raw markdown content.
+ * @param {string} [epic.retrospective.filePath] - Absolute path to the retro file.
+ * @param {string} [epic.retrospective.status] - Display status (e.g. `"optional"`).
+ * @returns {string} HTML string for the retrospective card element.
+ */
 function renderRetroCard(epic) {
   const retro = epic.retrospective;
   const hasContent = retro && retro.content;
@@ -2330,6 +2739,14 @@ window.toggleStory = function(slug) {
 
 // ── Toggle Group Helper ──────────────────────────────────────────────────
 
+/** Render a three-button Rendered / Edit / Raw toggle group for a content area.
+ * @param {string} contentKey - State key used to track view mode and dirty state.
+ * @param {'rendered'|'edit'|'raw'} mode - The currently active mode.
+ * @param {string} escapedFilePath - Single-quote-escaped file path passed to the handler.
+ * @param {string} [handler] - Name of the JS function to call on click.
+ *   Defaults to `'setViewMode'`; pass `'setDocViewMode'` for the document reader.
+ * @returns {string} HTML string for the toggle group `<div>`.
+ */
 function renderToggleGroup(contentKey, mode, escapedFilePath, handler) {
   const fn = handler || 'setViewMode';
   const extra = handler === 'setDocViewMode' ? `, '${escapedFilePath}'` : '';
@@ -2433,6 +2850,9 @@ window.restoreVersion = async function(key, filePath, versionIndex) {
   renderCurrentView();
 };
 
+/** Re-render the currently active content view (epic-detail or documents) in place.
+ * Used after saves or view-mode changes to refresh content without a full view switch.
+ */
 function renderCurrentView() {
   if (currentView === 'epic-detail') {
     renderEpicDetail();
@@ -2548,8 +2968,12 @@ const DOC_CATEGORY_META = {
 
 let activeDocPath = null;
 
-/**
- * Find existing documents matching a key document definition.
+/** Find the first document in the loaded project data that matches a key document definition.
+ * Matches on both the document's `category` field and one of the key doc's filename patterns.
+ * @param {object} keyDoc - A key document definition from `KEY_DOCUMENTS`.
+ * @param {string[]} keyDoc.categories - Accepted document category values.
+ * @param {RegExp[]} keyDoc.patterns - Filename patterns to test against `doc.filename` or `doc.name`.
+ * @returns {object|null} The matching document object, or `null` if not found.
  */
 function findKeyDoc(keyDoc) {
   if (!projectData || !projectData.documents) return null;
@@ -2559,8 +2983,11 @@ function findKeyDoc(keyDoc) {
   );
 }
 
-/**
- * Render a key document card — either with content or as a placeholder.
+/** Render the card for a key document slot.
+ * If the document exists in the project, shows View / Edit / Validate action buttons.
+ * If missing, shows a description and a "+ Create" button that launches the BMAD command.
+ * @param {object} keyDoc - A key document definition from `KEY_DOCUMENTS`.
+ * @returns {string} HTML string for the key document card element.
  */
 function renderKeyDocCard(keyDoc) {
   const doc = findKeyDoc(keyDoc);
@@ -2604,6 +3031,10 @@ function renderKeyDocCard(keyDoc) {
   }
 }
 
+/** Render the Documents view, including the key document grid, other-document category cards
+ * (grouped by category, excluding already-shown key docs), and BMAD resource links.
+ * Replaces the entire `#view-party` container HTML.
+ */
 function renderDocuments() {
   const container = document.getElementById('view-party');
   const hasDocs = projectData && projectData.documents && projectData.documents.length > 0;
@@ -2778,6 +3209,13 @@ window.selectDocument = function(el, filePath) {
   showDocumentReader(doc);
 };
 
+/** Render the document reader panel for a selected document, respecting the current view
+ * mode (rendered / edit / raw) and showing Save / Versions buttons in edit mode.
+ * @param {object} doc - Document object from the project data.
+ * @param {string} doc.name - Display name of the document.
+ * @param {string} doc.content - Raw markdown content.
+ * @param {string} [doc.filePath] - Absolute path for save/version operations.
+ */
 function showDocumentReader(doc) {
   const reader = document.getElementById('doc-detail-reader');
   if (!reader) return;
@@ -2850,6 +3288,7 @@ window.openExternal = function(url) {
 
 // ── Party Mode ──────────────────────────────────────────────────────────
 
+/** Render the Party Mode screen with launch instructions and a "Start Retrospective" button. */
 function renderPartyMode() {
   const container = document.getElementById('view-party');
   container.innerHTML = `
@@ -2879,11 +3318,19 @@ window.startPartyMode = async function() {
 
 // ── Project Selector ─────────────────────────────────────────────────────
 
+/** Wire the sidebar `#project-select` dropdown so that choosing a project loads it,
+ * refreshes the project list and git state, and navigates to the Epics view (or Welcome on failure).
+ */
 function setupProjectSelector() {
   const select = document.getElementById('project-select');
   select.addEventListener('change', async (e) => {
     const selectedPath = e.target.value;
     if (!selectedPath) return;
+
+    // Close old project's tabs
+    if (typeof window.closeAllTabs === 'function') {
+      window.closeAllTabs();
+    }
 
     const data = await window.api.loadProjectByPath(selectedPath);
     if (data && data.found) {
@@ -2893,6 +3340,10 @@ function setupProjectSelector() {
       await detectGitRepo();
       showView('epics');
       startPhasePoller();
+      // Restore new project's saved tabs
+      if (typeof window.restoreTabState === 'function') {
+        window.restoreTabState();
+      }
     } else {
       projectData = null;
       stopPhasePoller();
@@ -2903,6 +3354,10 @@ function setupProjectSelector() {
   });
 }
 
+/** Build an HTML `<option>` list for all non-archived projects, marking the currently
+ * loaded project as selected.
+ * @returns {Promise<string>} HTML string of `<option>` elements ready to inject into a `<select>`.
+ */
 async function buildProjectOptions() {
   const projects = await window.api.getProjectList();
   const currentPath = await window.api.getProjectPath();
@@ -2915,12 +3370,22 @@ async function buildProjectOptions() {
   return html;
 }
 
+/** Wire a project `<select>` embedded in a view header (e.g. Epics) so that selecting a
+ * project loads it and navigates to the Epics view, mirroring the sidebar selector.
+ * @param {string} selectId - The `id` attribute of the `<select>` element to wire.
+ */
 function setupInlineProjectSelect(selectId) {
   const select = document.getElementById(selectId);
   if (!select) return;
   select.addEventListener('change', async (e) => {
     const selectedPath = e.target.value;
     if (!selectedPath) return;
+
+    // Close old project's tabs
+    if (typeof window.closeAllTabs === 'function') {
+      window.closeAllTabs();
+    }
+
     const data = await window.api.loadProjectByPath(selectedPath);
     if (data && data.found) {
       projectData = data;
@@ -2929,10 +3394,18 @@ function setupInlineProjectSelect(selectId) {
       await detectGitRepo();
       showView('epics');
       startPhasePoller();
+      // Restore new project's saved tabs
+      if (typeof window.restoreTabState === 'function') {
+        window.restoreTabState();
+      }
     }
   });
 }
 
+/** Rebuild the sidebar `#project-select` dropdown from the current project list, filtering
+ * out archived projects and marking the active project as selected.
+ * @returns {Promise<void>}
+ */
 async function refreshProjectList() {
   const select = document.getElementById('project-select');
   const projects = await window.api.getProjectList();
@@ -2956,6 +3429,11 @@ async function refreshProjectList() {
 
 let settingsData = null;
 
+/** Fetch all settings, providers, projects, BMAD config, and app version in parallel, then
+ * render the full Settings view into `#settings-content`. Wires Save, BMAD-save, and
+ * companion-section event handlers after rendering.
+ * @returns {Promise<void>}
+ */
 async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
@@ -2972,13 +3450,15 @@ async function renderSettings() {
 
   settingsData = { ...settings };
 
-  const providerOptions = providers.map(p =>
-    `<option value="${p.key}"${p.key === settings.defaultLlm ? ' selected' : ''}>${p.name}</option>`
-  ).join('');
+  const providerOptions = providers.map(p => {
+    const locked = !isPro() && p.key !== 'claude';
+    return `<option value="${p.key}"${p.key === settings.defaultLlm ? ' selected' : ''}${locked ? ' disabled' : ''}>${p.name}${locked ? ' (Pro)' : ''}</option>`;
+  }).join('');
 
-  const reviewOptions = providers.map(p =>
-    `<option value="${p.key}"${p.key === settings.reviewLlm ? ' selected' : ''}>${p.name}</option>`
-  ).join('');
+  const reviewOptions = providers.map(p => {
+    const locked = !isPro() && p.key !== 'claude';
+    return `<option value="${p.key}"${p.key === settings.reviewLlm ? ' selected' : ''}${locked ? ' disabled' : ''}>${p.name}${locked ? ' (Pro)' : ''}</option>`;
+  }).join('');
 
   const llmConfig = settings.llmConfig || {};
   const termSettings = settings.terminal || {};
@@ -3219,6 +3699,29 @@ async function renderSettings() {
       </div>
       ` : ''}
 
+      <!-- License -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">License</h3>
+        ${isPro() && licenseStatus.trial ? `
+          <div class="upgrade-trial-banner">
+            <span>&#9889;</span>
+            <span>Pro Trial — ${licenseStatus.trialDaysLeft} day${licenseStatus.trialDaysLeft !== 1 ? 's' : ''} remaining</span>
+          </div>
+          <p class="settings-hint" style="margin-top:8px">Subscribe to keep Pro features after your trial ends.</p>
+          <button class="btn btn-primary btn-sm" id="btn-upgrade-from-settings" style="margin-top:8px">Subscribe to Pro</button>
+        ` : isPro() ? `
+          <div class="settings-manifest">
+            <div class="settings-manifest-item"><span>Status</span><span style="color:#22c55e">&#10003; BMAD Board Pro</span></div>
+            ${licenseStatus.plan ? `<div class="settings-manifest-item"><span>Plan</span><span>${licenseStatus.plan}</span></div>` : ''}
+            ${licenseStatus.customerEmail ? `<div class="settings-manifest-item"><span>Email</span><span>${licenseStatus.customerEmail}</span></div>` : ''}
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-deactivate-license" style="color:var(--danger);margin-top:8px">Deactivate License</button>
+        ` : `
+          <p class="settings-hint">You're using the free version. Upgrade to unlock Git integration, multi-tab terminal, and more.</p>
+          <button class="btn btn-primary btn-sm" id="btn-upgrade-from-settings" style="margin-top:8px">Upgrade to Pro</button>
+        `}
+      </div>
+
       <!-- About -->
       <div class="settings-section">
         <h3 class="settings-section-title">About</h3>
@@ -3250,6 +3753,23 @@ async function renderSettings() {
     bmadSaveBtn.addEventListener('click', saveBmadConfigFromForm);
   }
 
+  // Wire license buttons
+  const upgradeBtn = document.getElementById('btn-upgrade-from-settings');
+  if (upgradeBtn) {
+    upgradeBtn.addEventListener('click', () => showUpgradeModal());
+  }
+  const deactivateBtn = document.getElementById('btn-deactivate-license');
+  if (deactivateBtn) {
+    deactivateBtn.addEventListener('click', async () => {
+      if (!confirm('Deactivate your Pro license on this machine?')) return;
+      await window.api.deactivateLicense();
+      licenseStatus = await window.api.getLicenseStatus();
+      updateProBadges();
+      renderSettings();
+      showToast('License deactivated', 'info');
+    });
+  }
+
   // Render companion section
   renderCompanionSection();
 
@@ -3257,6 +3777,11 @@ async function renderSettings() {
   renderSyncSection();
 }
 
+/** Fetch companion server info and render the mobile companion sub-section inside
+ * `#companion-section`. Shows an enable toggle when the server is off, or a QR code,
+ * connection URL, copy button, and token-regeneration button when running.
+ * @returns {Promise<void>}
+ */
 async function renderCompanionSection() {
   const section = document.getElementById('companion-section');
   if (!section) return;
@@ -3644,6 +4169,13 @@ function generateQRMatrix(text) {
   return grid;
 }
 
+/** Place a 7×7 finder pattern (plus 1-module quiet separator) at a given corner of the QR grid.
+ * @param {boolean[][]} grid - Module grid to write into.
+ * @param {boolean[][]} reserved - Parallel grid tracking reserved (non-data) positions.
+ * @param {number} row - Top-left row of the finder pattern.
+ * @param {number} col - Top-left column of the finder pattern.
+ * @param {number} size - Total grid size (used for bounds checking).
+ */
 function qrPlaceFinder(grid, reserved, row, col, size) {
   const pattern = [
     [1,1,1,1,1,1,1],
@@ -3668,6 +4200,12 @@ function qrPlaceFinder(grid, reserved, row, col, size) {
   }
 }
 
+/** Place a 5×5 alignment pattern centered at the given cell.
+ * @param {boolean[][]} grid - Module grid to write into.
+ * @param {boolean[][]} reserved - Parallel reserved-positions grid.
+ * @param {number} centerR - Center row of the alignment pattern.
+ * @param {number} centerC - Center column of the alignment pattern.
+ */
 function qrPlaceAlignment(grid, reserved, centerR, centerC) {
   for (let r = -2; r <= 2; r++) {
     for (let c = -2; c <= 2; c++) {
@@ -3678,6 +4216,10 @@ function qrPlaceAlignment(grid, reserved, centerR, centerC) {
   }
 }
 
+/** Mark the format information areas (around finder patterns) as reserved in the grid.
+ * @param {boolean[][]} reserved - Parallel reserved-positions grid to update.
+ * @param {number} size - Total grid size.
+ */
 function qrReserveFormatArea(reserved, size) {
   for (let i = 0; i < 8; i++) {
     reserved[8][i] = true; reserved[8][size - 1 - i] = true;
@@ -3686,6 +4228,11 @@ function qrReserveFormatArea(reserved, size) {
   reserved[8][8] = true;
 }
 
+/** Write the 15-bit format information string into both format info regions of the QR grid.
+ * @param {boolean[][]} grid - Module grid to write into.
+ * @param {string} bits - 15-character binary string (e.g. `FORMAT_BITS`).
+ * @param {number} size - Total grid size.
+ */
 function qrPlaceFormatInfo(grid, bits, size) {
   const p1 = [[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
   const p2 = [[size-1,8],[size-2,8],[size-3,8],[size-4,8],[size-5,8],[size-6,8],[size-7,8],[8,size-8],[8,size-7],[8,size-6],[8,size-5],[8,size-4],[8,size-3],[8,size-2],[8,size-1]];
@@ -3696,6 +4243,13 @@ function qrPlaceFormatInfo(grid, bits, size) {
   }
 }
 
+/** Write data and error-correction codeword bits into the QR module grid using the
+ * standard two-column upward/downward zigzag placement order, skipping reserved cells.
+ * @param {boolean[][]} grid - Module grid to write into.
+ * @param {boolean[][]} reserved - Parallel reserved-positions grid.
+ * @param {number[]|Uint8Array} codewords - Combined data + EC codeword bytes.
+ * @param {number} size - Total grid size.
+ */
 function qrPlaceData(grid, reserved, codewords, size) {
   let bitIdx = 0;
   const totalBits = codewords.length * 8;
@@ -3726,6 +4280,12 @@ function qrPlaceData(grid, reserved, codewords, size) {
   }
 }
 
+/** Compute Reed-Solomon error correction codewords for a data block using GF(256)
+ * arithmetic with the QR code generator polynomial.
+ * @param {number[]} data - Data codeword byte values.
+ * @param {number} ecCount - Number of error correction codewords to generate.
+ * @returns {Uint8Array} Array of `ecCount` error correction codeword bytes.
+ */
 function reedSolomon(data, ecCount) {
   const gfExp = new Uint8Array(512);
   const gfLog = new Uint8Array(256);
@@ -3763,6 +4323,11 @@ function reedSolomon(data, ecCount) {
   return msg.slice(data.length);
 }
 
+/** Read all settings form fields, merge in the existing companion state to avoid
+ * overwriting it, persist via `window.api.saveSettings`, restart the phase poller and
+ * git auto-fetch timer with new intervals, then flash a "Saved!" status message.
+ * @returns {Promise<void>}
+ */
 async function saveSettingsFromForm() {
   const providers = await window.api.getProviders();
   const llmConfig = {};
@@ -3820,6 +4385,11 @@ async function saveSettingsFromForm() {
   }
 }
 
+/** Read the editable BMAD config fields from the settings form and persist them via
+ * `window.api.writeBmadConfig`. Updates the Save button label to "Saved!" on success
+ * or shows an error message on failure.
+ * @returns {Promise<void>}
+ */
 async function saveBmadConfigFromForm() {
   const fields = ['project_name', 'user_name', 'user_skill_level', 'communication_language', 'document_output_language'];
   const updates = {};
@@ -3840,6 +4410,10 @@ async function saveBmadConfigFromForm() {
   }
 }
 
+/** Convert a snake_case field name to a title-cased human-readable label.
+ * @param {string} field - Snake_case field name (e.g. `"user_skill_level"`).
+ * @returns {string} Title-cased label (e.g. `"User Skill Level"`).
+ */
 function formatFieldLabel(field) {
   return field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }

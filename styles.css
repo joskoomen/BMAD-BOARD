@@ -392,8 +392,8 @@ html, body {
 }
 
 .warning-box {
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
   border-radius: var(--radius-lg);
   padding: 20px 24px;
   color: var(--warning);
@@ -2907,8 +2907,8 @@ html, body {
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
   transition: background var(--transition);
 }
 
@@ -3102,4 +3102,273 @@ html, body {
   text-transform: uppercase;
   width: 56px;
   flex-shrink: 0;
+}
+
+/* ── Pro Badge & License ─────────────────────────────────────────────── */
+
+.nav-pro-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
+.nav-pro-badge.hidden {
+  display: none;
+}
+
+/* Nav item with pro lock — subtle opacity when locked */
+.nav-item.pro-locked {
+  opacity: 0.65;
+}
+
+.nav-item.pro-locked:hover {
+  opacity: 0.85;
+}
+
+.nav-item.pro-locked .nav-pro-badge {
+  display: inline-block;
+}
+
+/* ── Upgrade Modal ───────────────────────────────────────────────────── */
+
+.upgrade-modal {
+  max-width: 440px;
+}
+
+.upgrade-modal .modal-header {
+  border-bottom: 1px solid var(--border);
+}
+
+.upgrade-modal .modal-header h3 {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.upgrade-feature-desc {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.upgrade-features-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.upgrade-feature-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.upgrade-check {
+  color: #22c55e;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.upgrade-plan-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+
+.plan-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.plan-btn.active {
+  background: var(--accent);
+  color: #000;
+}
+
+.plan-btn:hover:not(.active) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.plan-save {
+  font-size: 10px;
+  font-weight: 700;
+  color: #22c55e;
+  margin-left: 4px;
+}
+
+.plan-btn.active .plan-save {
+  color: #065f46;
+}
+
+.upgrade-subscribe-btn {
+  margin-bottom: 16px;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Trial box */
+.upgrade-trial-section {
+  margin-bottom: 16px;
+}
+
+.upgrade-trial-box {
+  background: rgba(34, 197, 94, 0.06);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.upgrade-trial-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: #22c55e;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.upgrade-trial-icon {
+  font-size: 16px;
+}
+
+.upgrade-trial-form {
+  display: flex;
+  gap: 8px;
+}
+
+.upgrade-trial-form .input {
+  flex: 1;
+  font-size: 13px;
+}
+
+.upgrade-trial-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.upgrade-trial-section.hidden {
+  display: none;
+}
+
+/* Trial active banner in settings */
+.upgrade-trial-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: #22c55e;
+}
+
+.upgrade-divider {
+  text-align: center;
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.upgrade-divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--border);
+}
+
+.upgrade-divider span {
+  position: relative;
+  background: var(--bg-secondary);
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.upgrade-license-section {
+  text-align: center;
+}
+
+.upgrade-license-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.upgrade-license-input .input {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.upgrade-license-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.upgrade-license-success {
+  color: #22c55e;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+/* Pro active state — show badge differently for active subscribers */
+.nav-pro-badge.pro-active {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+}
+
+/* Terminal pro upgrade prompt (inline) */
+.terminal-pro-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: var(--radius);
+  color: #22c55e;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.terminal-pro-prompt:hover {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
 }
