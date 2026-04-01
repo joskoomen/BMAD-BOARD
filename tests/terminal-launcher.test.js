@@ -14,10 +14,6 @@ describe('terminal-launcher', () => {
     _setExec(execMock);
   });
 
-  afterEach(() => {
-    _setExec(null);
-  });
-
   describe('openTerminal', () => {
     it('calls osascript with AppleScript', async () => {
       execMock.mockImplementation((cmd, cb) => cb(null));
