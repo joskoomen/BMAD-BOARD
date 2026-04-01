@@ -491,12 +491,11 @@ async function createTab(slashCommand, opts) {
   return tabId;
 }
 
-/** Spawn a new PTY session for an existing tab and wire up data/exit listeners.
- * Can also be called to replace a dead session on the same tab object — any
- * previous IPC listeners are torn down before the new session is created.
- * Sets `tab.sessionId` on success and marks `tab.alive = true`.
- * @param {object} tab - The tab object from the {@link tabs} map.
- * @returns {Promise<void>} Resolves once the PTY session has been created.
+/**
+ * Spawn a new PTY for the given tab, tear down any previous IPC listeners, and wire data/exit handlers.
+ *
+ * On success sets `tab.sessionId` to the created session id and `tab.alive = true`. If `tab.storySlug` is present, sends story metadata to the main process for companion terminal sharing. Incoming terminal data is written to `tab.term` and updates activity tracking; exit events mark the tab dead and trigger UI updates (status dot, tab rendering, optional return-to-git behavior, and the next-step bar when active).
+ * @param {object} tab - Tab record from the tabs map; its `term` instance is used to determine cols/rows and receive/write terminal I/O.
  */
 async function createPtyForTab(tab) {
   // Clean up old listeners

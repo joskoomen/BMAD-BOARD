@@ -212,7 +212,15 @@ function connectWebSocket() {
   };
 }
 
-/** Schedule a WebSocket reconnection with exponential backoff. */
+/**
+ * Schedule a future attempt to re-establish the WebSocket connection using exponential backoff.
+ *
+ * Clears any existing scheduled reconnect, returns immediately if the maximum reconnect
+ * attempts have been reached, increments the reconnect attempt counter, and schedules
+ * a reconnection after an exponentially increasing delay (capped at 30 seconds).
+ * When the timer fires, a reconnection is attempted only if there is no active socket
+ * or the socket is closed.
+ */
 function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
@@ -504,7 +512,14 @@ function renderDashboard() {
   }
 }
 
-/** Render the story list for the currently selected epic. */
+/**
+ * Render the selected epic's detail view and populate its stories list in the DOM.
+ *
+ * Updates the epic header elements (#epic-status, #epic-title) and replaces the
+ * contents of #stories-list with story cards that reflect each story's phase,
+ * whether it is currently running on the desktop, and the appropriate action
+ * buttons (Run or Advance) for that story.
+ */
 function renderEpicDetail() {
   if (!currentEpic) return;
 
