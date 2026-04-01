@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { SyncEngine } from '../lib/sync-engine.js';
+import { contentHash } from '../lib/sync-providers.js';
 
 // ── Test Helpers ────────────────────────────────────────────────────────
 
@@ -213,6 +214,375 @@ describe('SyncEngine', () => {
 
       const content = fs.readFileSync(path.join(implDir, 'sprint-status.yaml'), 'utf-8');
       expect(content).toContain('1-2-tests: review');
+    });
+
+    it('returns false when slug not found', () => {
+      const implDir = path.join(tmpDir, '_bmad-output', 'implementation');
+      fs.mkdirSync(implDir, { recursive: true });
+      fs.writeFileSync(path.join(implDir, 'sprint-status.yaml'),
+        'project: Test\n  1-1-setup: done\n');
+
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      expect(engine._updateStoryStatus('nonexistent', 'review')).toBe(false);
+    });
+
+    it('returns false when no sprint-status.yaml exists', () => {
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      expect(engine._updateStoryStatus('1-1-setup', 'review')).toBe(false);
+    });
+
+    it('tries fallback path when first does not exist', () => {
+      // Create file at second candidate path
+      const fallbackDir = path.join(tmpDir, '_bmad-output');
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      fs.writeFileSync(path.join(fallbackDir, 'sprint-status.yaml'),
+        'project: Test\n  1-1-setup: done\n');
+
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      const updated = engine._updateStoryStatus('1-1-setup', 'review');
+      expect(updated).toBe(true);
+
+      const content = fs.readFileSync(path.join(fallbackDir, 'sprint-status.yaml'), 'utf-8');
+      expect(content).toContain('1-1-setup: review');
+    });
+  });
+
+  // ── _applyPull conflict resolution ───────────────────────────────────
+
+  describe('_applyPull', () => {
+    /** Helper: set up an engine with mappings and local story files. */
+    function setupPullScenario({ localContent, mappingHash, mappingLastSync, localFileMtime }) {
+      const storyFile = path.join(tmpDir, 'story-1-2-tests.md');
+      fs.writeFileSync(storyFile, localContent);
+      if (localFileMtime) {
+        fs.utimesSync(storyFile, localFileMtime, localFileMtime);
+      }
+
+      const localData = {
+        epics: [{
+          number: 1,
+          stories: [{
+            slug: '1-2-tests',
+            title: 'Tests',
+            status: 'in-progress',
+            content: localContent,
+            filePath: storyFile
+          }]
+        }]
+      };
+
+      const engine = new SyncEngine(tmpDir, () => localData);
+      // Pre-populate mapping
+      engine.state.provider = 'obsidian';
+      engine.state.config = { vaultPath: '/tmp' };
+      engine.state.mappings.stories['1-2-tests'] = {
+        contentHash: mappingHash || contentHash(localContent),
+        lastSync: mappingLastSync || new Date(Date.now() - 60000).toISOString()
+      };
+
+      return { engine, localData, storyFile };
+    }
+
+    it('returns zero applied when no remote stories', async () => {
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      const result = await engine._applyPull({ stories: [] }, { epics: [] }, 'local-wins');
+      expect(result.applied).toBe(0);
+      expect(result.conflicts).toEqual([]);
+    });
+
+    it('skips stories without mappings', async () => {
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      const remoteData = {
+        stories: [{ slug: 'unknown-story', content: '# Unknown', lastEdited: new Date().toISOString() }]
+      };
+      const result = await engine._applyPull(remoteData, { epics: [] }, 'local-wins');
+      expect(result.applied).toBe(0);
+    });
+
+    it('skips unchanged remote (remoteDate <= lastSyncDate)', async () => {
+      const now = new Date();
+      const { engine, localData } = setupPullScenario({
+        localContent: '# Tests\n\nWIP.',
+        mappingLastSync: now.toISOString()
+      });
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nUpdated.',
+          lastEdited: new Date(now.getTime() - 10000).toISOString()
+        }]
+      };
+
+      const result = await engine._applyPull(remoteData, localData, 'local-wins');
+      expect(result.applied).toBe(0);
+    });
+
+    it('applies remote-only change when local is unchanged', async () => {
+      const originalContent = '# Tests\n\nWIP.';
+      const { engine, localData, storyFile } = setupPullScenario({
+        localContent: originalContent,
+        mappingHash: contentHash(originalContent) // local matches mapping = no local change
+      });
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nUpdated remotely.',
+          lastEdited: new Date().toISOString()
+        }]
+      };
+
+      const result = await engine._applyPull(remoteData, localData, 'local-wins');
+      expect(result.applied).toBe(1);
+      expect(result.conflicts).toEqual([]);
+      expect(fs.readFileSync(storyFile, 'utf-8')).toBe('# Tests\n\nUpdated remotely.');
+    });
+
+    it('conflict with local-wins keeps local content', async () => {
+      const originalContent = '# Tests\n\nOriginal.';
+      const { engine, localData, storyFile } = setupPullScenario({
+        localContent: '# Tests\n\nLocally edited.',
+        mappingHash: contentHash(originalContent) // Different from current local = local changed
+      });
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nRemotely edited.',
+          lastEdited: new Date().toISOString()
+        }]
+      };
+
+      const result = await engine._applyPull(remoteData, localData, 'local-wins');
+      expect(result.applied).toBe(0);
+      expect(result.conflicts).toEqual([]);
+      // Local file should be unchanged
+      expect(fs.readFileSync(storyFile, 'utf-8')).toBe('# Tests\n\nLocally edited.');
+    });
+
+    it('conflict with remote-wins overwrites local', async () => {
+      const originalContent = '# Tests\n\nOriginal.';
+      const { engine, localData, storyFile } = setupPullScenario({
+        localContent: '# Tests\n\nLocally edited.',
+        mappingHash: contentHash(originalContent)
+      });
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nRemotely edited.',
+          lastEdited: new Date().toISOString()
+        }]
+      };
+
+      const result = await engine._applyPull(remoteData, localData, 'remote-wins');
+      expect(result.applied).toBe(1);
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0]).toMatchObject({ type: 'story', key: '1-2-tests', resolution: 'remote-wins' });
+      expect(fs.readFileSync(storyFile, 'utf-8')).toBe('# Tests\n\nRemotely edited.');
+    });
+
+    it('conflict with last-modified-wins — local newer keeps local', async () => {
+      const originalContent = '# Tests\n\nOriginal.';
+      const localTime = new Date();
+      const remoteTime = new Date(localTime.getTime() - 30000); // remote is older
+
+      const { engine, localData, storyFile } = setupPullScenario({
+        localContent: '# Tests\n\nLocally edited.',
+        mappingHash: contentHash(originalContent),
+        localFileMtime: localTime
+      });
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nRemotely edited.',
+          lastEdited: remoteTime.toISOString()
+        }]
+      };
+
+      const result = await engine._applyPull(remoteData, localData, 'last-modified-wins');
+      expect(result.applied).toBe(0);
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0].resolution).toBe('local-wins');
+      expect(fs.readFileSync(storyFile, 'utf-8')).toBe('# Tests\n\nLocally edited.');
+    });
+
+    it('conflict with last-modified-wins — remote newer applies remote', async () => {
+      const originalContent = '# Tests\n\nOriginal.';
+      const localTime = new Date(Date.now() - 60000); // local is older
+      const remoteTime = new Date();
+
+      const { engine, localData, storyFile } = setupPullScenario({
+        localContent: '# Tests\n\nLocally edited.',
+        mappingHash: contentHash(originalContent),
+        localFileMtime: localTime
+      });
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nRemotely edited.',
+          lastEdited: remoteTime.toISOString()
+        }]
+      };
+
+      const result = await engine._applyPull(remoteData, localData, 'last-modified-wins');
+      expect(result.applied).toBe(1);
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0].resolution).toBe('remote-wins');
+      expect(fs.readFileSync(storyFile, 'utf-8')).toBe('# Tests\n\nRemotely edited.');
+    });
+
+    it('status change triggers _updateStoryStatus', async () => {
+      const originalContent = '# Tests\n\nWIP.';
+      const { engine, localData } = setupPullScenario({
+        localContent: originalContent,
+        mappingHash: contentHash(originalContent)
+      });
+
+      // Create sprint status file
+      const implDir = path.join(tmpDir, '_bmad-output', 'implementation');
+      fs.mkdirSync(implDir, { recursive: true });
+      fs.writeFileSync(path.join(implDir, 'sprint-status.yaml'),
+        'project: Test\n  1-2-tests: in-progress\n');
+
+      const remoteData = {
+        stories: [{
+          slug: '1-2-tests',
+          content: '# Tests\n\nUpdated.',
+          status: 'review', // Different from local 'in-progress'
+          lastEdited: new Date().toISOString()
+        }]
+      };
+
+      await engine._applyPull(remoteData, localData, 'local-wins');
+
+      const yamlContent = fs.readFileSync(path.join(implDir, 'sprint-status.yaml'), 'utf-8');
+      expect(yamlContent).toContain('1-2-tests: review');
+    });
+  });
+
+  // ── syncItem ─────────────────────────────────────────────────────────
+
+  describe('syncItem', () => {
+    it('returns error for item not found', async () => {
+      const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bmad-vault-'));
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath });
+      await engine.setup();
+
+      const result = await engine.syncItem('story', 'nonexistent-slug');
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('Item not found');
+
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    });
+
+    it('pushes a single epic by key', async () => {
+      const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bmad-vault-'));
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath });
+      await engine.setup();
+
+      const result = await engine.syncItem('epic', 'epic-1');
+      expect(result.ok).toBe(true);
+
+      // Verify epic file was created
+      const projectDir = path.join(vaultPath, 'Test Project');
+      expect(fs.existsSync(path.join(projectDir, 'epics', 'epic-1.md'))).toBe(true);
+
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    });
+
+    it('pushes a single story by slug', async () => {
+      const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bmad-vault-'));
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath });
+      await engine.setup();
+
+      const result = await engine.syncItem('story', '1-1-setup');
+      expect(result.ok).toBe(true);
+
+      const projectDir = path.join(vaultPath, 'Test Project');
+      expect(fs.existsSync(path.join(projectDir, 'stories', '1-1-setup.md'))).toBe(true);
+
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    });
+
+    it('pushes a single document by filename', async () => {
+      const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bmad-vault-'));
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath });
+      await engine.setup();
+
+      const result = await engine.syncItem('document', 'prd.md');
+      expect(result.ok).toBe(true);
+
+      const projectDir = path.join(vaultPath, 'Test Project');
+      expect(fs.existsSync(path.join(projectDir, 'documents', 'prd.md'))).toBe(true);
+
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    });
+  });
+
+  // ── syncAll direction control ────────────────────────────────────────
+
+  describe('syncAll direction', () => {
+    it('push-only does not call pull', async () => {
+      const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bmad-vault-'));
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath });
+      await engine.setup();
+
+      const report = await engine.syncAll({ direction: 'push' });
+      expect(report.pushed).toBeGreaterThan(0);
+      expect(report.pulled).toBe(0);
+      expect(report.lastFullSync).toBeUndefined(); // report doesn't have this, state does
+      expect(engine.state.lastFullSync).toBeTruthy();
+
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    });
+
+    it('pull-only does not push', async () => {
+      const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), 'bmad-vault-'));
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath });
+      await engine.setup();
+
+      const report = await engine.syncAll({ direction: 'pull' });
+      expect(report.pushed).toBe(0);
+
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    });
+
+    it('records errors when push fails', async () => {
+      // Use a file as vaultPath (not a directory) — push will fail when trying to mkdir
+      const vaultFile = path.join(tmpDir, 'not-a-directory');
+      fs.writeFileSync(vaultFile, 'block');
+
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.state.provider = 'obsidian';
+      engine.state.config = { vaultPath: vaultFile };
+
+      const report = await engine.syncAll({ direction: 'push' });
+      expect(report.errors.length).toBeGreaterThan(0);
+      expect(report.errors[0]).toContain('Push failed');
+    });
+  });
+
+  // ── getState ─────────────────────────────────────────────────────────
+
+  describe('getState', () => {
+    it('returns a copy of internal state', () => {
+      const engine = new SyncEngine(tmpDir, mockScanProject);
+      engine.configure('obsidian', { vaultPath: '/tmp' });
+      const state = engine.getState();
+      expect(state.provider).toBe('obsidian');
+      // Verify it is a copy
+      state.provider = 'changed';
+      expect(engine.state.provider).toBe('obsidian');
     });
   });
 });

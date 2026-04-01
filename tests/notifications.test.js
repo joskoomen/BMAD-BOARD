@@ -1,36 +1,12 @@
+/**
+ * Tests for phase change detection logic.
+ *
+ * Imports from lib/phase-detection.js — the shared module used by
+ * both the renderer (app.js) and these tests.
+ */
+
 import { describe, it, expect } from 'vitest';
-
-// ── Phase change detection (extracted logic from app.js) ────────────────
-
-function detectPhaseChanges(previousStates, currentEpics) {
-  const changes = [];
-  for (const epic of currentEpics) {
-    for (const story of (epic.stories || [])) {
-      const prev = previousStates[story.slug];
-      if (prev && prev !== story.status) {
-        changes.push({
-          slug: story.slug,
-          title: story.title,
-          epicNumber: story.epicNumber,
-          storyNumber: story.storyNumber,
-          from: prev,
-          to: story.status
-        });
-      }
-    }
-  }
-  return changes;
-}
-
-function snapshotStates(epics) {
-  const states = {};
-  for (const epic of epics) {
-    for (const story of (epic.stories || [])) {
-      states[story.slug] = story.status;
-    }
-  }
-  return states;
-}
+import { detectPhaseChanges, snapshotStates } from '../lib/phase-detection.js';
 
 // ── Tests ───────────────────────────────────────────────────────────────
 

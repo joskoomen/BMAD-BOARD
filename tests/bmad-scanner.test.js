@@ -334,3 +334,65 @@ development_status:
     expect(story.title).toBe('Multi Addon Schema Support');
   });
 });
+
+// ── Error resilience ────────────────────────────────────────────────────
+
+describe('Error resilience', () => {
+  it('malformed YAML config does not crash', () => {
+    writeFile('_bmad/bmm/config.yaml', ':::invalid\n');
+    writeFile('_bmad-output/.keep', '');
+    const result = scanProject(tmpDir);
+    expect(result.found).toBe(true);
+    // With an unparseable config, projectName falls back to empty string
+    expect(result.config.projectName).toBeDefined();
+    expect(result.epics).toBeDefined();
+  });
+
+  it('empty sprint-status.yaml returns empty epics', () => {
+    writeFile('_bmad/bmm/config.yaml', 'project_name: Test\n');
+    writeFile('_bmad-output/implementation/sprint-status.yaml', '');
+    const result = scanProject(tmpDir);
+    expect(result.found).toBe(true);
+    expect(result.epics).toEqual([]);
+  });
+
+  it('sprint-status with unknown status values preserves them', () => {
+    writeFile('_bmad/bmm/config.yaml', 'project_name: Test\n');
+    writeFile('_bmad-output/implementation/sprint-status.yaml', `
+development_status:
+  # Epic 1: Test
+  epic-1: custom-status
+  1-1-test: custom-status
+`);
+    const result = scanProject(tmpDir);
+    expect(result.found).toBe(true);
+    expect(result.epics).toHaveLength(1);
+    expect(result.epics[0].stories).toHaveLength(1);
+    expect(result.epics[0].stories[0].status).toBe('custom-status');
+  });
+
+  it('missing output folder returns warning', () => {
+    writeFile('_bmad/bmm/config.yaml', 'output_folder: nonexistent-output\n');
+    const result = scanProject(tmpDir);
+    expect(result.found).toBe(true);
+    expect(result.warning).toBeDefined();
+    expect(result.epics).toEqual([]);
+  });
+
+  it('story file referenced in sprint-status but missing on disk has null content and filePath', () => {
+    writeFile('_bmad/bmm/config.yaml', 'project_name: Test\n');
+    writeFile('_bmad-output/implementation/sprint-status.yaml', `
+development_status:
+  # Epic 1: Test
+  epic-1: in-progress
+  1-1-missing-story: in-progress
+`);
+    // Intentionally do NOT create 1-1-missing-story.md
+    const result = scanProject(tmpDir);
+    expect(result.found).toBe(true);
+    const story = result.epics[0].stories[0];
+    expect(story.slug).toBe('1-1-missing-story');
+    expect(story.content).toBeNull();
+    expect(story.filePath).toBeNull();
+  });
+});

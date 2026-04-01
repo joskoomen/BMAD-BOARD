@@ -636,5 +636,104 @@ describe('CompanionServer', () => {
         });
       });
     });
+
+    it('rejects with old token after rotation', async () => {
+      server = createServer();
+      await server.start(nextPort());
+      const oldToken = server.token;
+      server.rotateToken();
+
+      const res = await httpGet(server.port, '/api/status', oldToken);
+      expect(res.status).toBe(401);
+    });
+
+    it('malformed WebSocket JSON sends error, does not crash', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const { ws: client, messages } = await connectWS(server.port, server.token);
+      await waitForMessage(messages, 'project:state');
+
+      // Send garbage JSON
+      client.send('not valid json {{{');
+      const err = await waitForMessage(messages, 'error');
+      expect(err.type).toBe('error');
+
+      client.close();
+    });
+  });
+
+  // ── Edge cases ─────────────────────────────────────────────────────────
+
+  describe('Edge cases', () => {
+    it('shareTerminalData enforces 50KB buffer cap', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      // Write 60KB of data to the shared terminal buffer
+      const bigChunk = 'X'.repeat(60000);
+      server.shareTerminalData('sess-1', bigChunk);
+
+      const terminals = server.getSharedTerminals();
+      expect(terminals).toHaveLength(1);
+      expect(terminals[0].bufferSize).toBeLessThanOrEqual(50000);
+    });
+
+    it('shareTerminalData accumulates across multiple calls', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalData('sess-1', 'hello ');
+      server.shareTerminalData('sess-1', 'world');
+
+      // Internal buffer should have both
+      const terminals = server.getSharedTerminals();
+      expect(terminals[0].bufferSize).toBe(11);
+    });
+
+    it('_lightProjectData handles null input', () => {
+      server = createServer();
+      expect(server._lightProjectData(null)).toBeNull();
+    });
+
+    it('_lightProjectData strips story content', () => {
+      server = createServer();
+      const data = {
+        epics: [{
+          number: 1,
+          stories: [{ slug: 'test', content: 'full markdown content' }],
+          retrospective: null
+        }],
+        documents: [{ name: 'doc', content: 'full doc content' }]
+      };
+      const lite = server._lightProjectData(data);
+      expect(lite.epics[0].stories[0].content).toBeUndefined();
+      expect(lite.documents[0].content).toBeUndefined();
+    });
+
+    it('unauthenticated request returns 401', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const res = await httpGet(server.port, '/api/status', null);
+      expect(res.status).toBe(401);
+    });
+
+    it('auth via query token works', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const res = await httpGet(server.port, `/api/status?token=${server.token}`, null);
+      expect(res.status).toBe(200);
+    });
+
+    it('shareTerminalExit marks session inactive', () => {
+      server = createServer();
+      server.shareTerminalData('sess-2', 'data');
+      expect(server.getSharedTerminals()).toHaveLength(1);
+
+      server.shareTerminalExit('sess-2', 0);
+      expect(server.getSharedTerminals()).toHaveLength(0);
+    });
   });
 });
