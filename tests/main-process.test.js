@@ -636,3 +636,101 @@ describe('Per-project session history', () => {
     expect(hist.map(e => e.id)).toEqual(['s2', 's1']);
   });
 });
+
+// ── terminal:tab-meta IPC handler (new in this PR) ──────────────────────
+//
+// The handler in main.js calls companionServer.shareTerminalStart when it
+// receives terminal:tab-meta from the renderer process. We test the logic
+// inline (extracted) since the IPC channel itself requires Electron.
+
+describe('terminal:tab-meta IPC handler logic', () => {
+  /**
+   * Simulates the handler from main.js:
+   *   ipcMain.on('terminal:tab-meta', (event, data) => {
+   *     if (companionServer && data?.sessionId) {
+   *       companionServer.shareTerminalStart(data.sessionId, {
+   *         storySlug: data.storySlug,
+   *         storyPhase: data.storyPhase
+   *       });
+   *     }
+   *   });
+   */
+  function handleTerminalTabMeta(companionServer, data) {
+    if (companionServer && data?.sessionId) {
+      companionServer.shareTerminalStart(data.sessionId, {
+        storySlug: data.storySlug,
+        storyPhase: data.storyPhase
+      });
+    }
+  }
+
+  it('calls shareTerminalStart with correct sessionId and story metadata', () => {
+    const calls = [];
+    const mockServer = {
+      shareTerminalStart: (sessionId, opts) => calls.push({ sessionId, opts })
+    };
+
+    handleTerminalTabMeta(mockServer, {
+      sessionId: 42,
+      storySlug: '1-1-my-story',
+      storyPhase: 'in-progress'
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sessionId).toBe(42);
+    expect(calls[0].opts.storySlug).toBe('1-1-my-story');
+    expect(calls[0].opts.storyPhase).toBe('in-progress');
+  });
+
+  it('does nothing when companionServer is null', () => {
+    // Should not throw
+    expect(() => handleTerminalTabMeta(null, { sessionId: 1, storySlug: 'x' })).not.toThrow();
+  });
+
+  it('does nothing when data has no sessionId', () => {
+    const calls = [];
+    const mockServer = {
+      shareTerminalStart: (sessionId, opts) => calls.push({ sessionId, opts })
+    };
+
+    handleTerminalTabMeta(mockServer, { storySlug: 'x', storyPhase: 'review' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does nothing when data is null', () => {
+    const calls = [];
+    const mockServer = {
+      shareTerminalStart: (sessionId, opts) => calls.push({ sessionId, opts })
+    };
+
+    handleTerminalTabMeta(mockServer, null);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('passes undefined storySlug and storyPhase when not present in data', () => {
+    const calls = [];
+    const mockServer = {
+      shareTerminalStart: (sessionId, opts) => calls.push({ sessionId, opts })
+    };
+
+    handleTerminalTabMeta(mockServer, { sessionId: 99 });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sessionId).toBe(99);
+    expect(calls[0].opts.storySlug).toBeUndefined();
+    expect(calls[0].opts.storyPhase).toBeUndefined();
+  });
+
+  it('handles tab metadata without a story (plain terminal tab)', () => {
+    const calls = [];
+    const mockServer = {
+      shareTerminalStart: (sessionId, opts) => calls.push({ sessionId, opts })
+    };
+
+    // Renderer sends tab meta for a non-story terminal (storySlug absent)
+    handleTerminalTabMeta(mockServer, { sessionId: 7, storySlug: undefined, storyPhase: undefined });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].opts.storySlug).toBeUndefined();
+  });
+});
