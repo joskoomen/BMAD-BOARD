@@ -6,7 +6,6 @@
  */
 
 import { TerminalManager } from '../lib/terminal-manager.js';
-import { TerminalManager } from '../lib/terminal-manager.js';
 
 // ── Mock PTY factory ───────────────────────────────────────────────────
 
