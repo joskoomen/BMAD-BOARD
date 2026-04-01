@@ -5,7 +5,7 @@
  * native node-pty module, which is difficult to mock via vitest with CJS.
  */
 
-import { TerminalManager } from '../lib/terminal-manager.js';
+const { TerminalManager } = require('../lib/terminal-manager.js');
 
 // ── Mock PTY factory ───────────────────────────────────────────────────
 
@@ -211,16 +211,13 @@ describe('TerminalManager', () => {
   describe('killAll', () => {
     it('kills all sessions', () => {
       const mocks = [];
-      for (let i = 0; i < 3; i++) {
-        const m = createMockPty();
-        mocks.push(m);
-        mockPty = m;
-        manager = new TerminalManager({ ptyProvider: createMockPtyProvider(() => m) });
-      }
-      // Recreate with a provider that cycles through mocks
       let idx = 0;
       manager = new TerminalManager({
-        ptyProvider: createMockPtyProvider(() => mocks[idx++])
+        ptyProvider: createMockPtyProvider(() => {
+          const m = createMockPty();
+          mocks.push(m);
+          return m;
+        })
       });
 
       manager.create({ cwd: '/tmp' });
@@ -255,6 +252,59 @@ describe('TerminalManager', () => {
       const id = manager.create({ cwd: '/tmp' });
       manager.kill(id);
       expect(manager.has(id)).toBe(false);
+    });
+
+    it('returns false after session exits via PTY', () => {
+      const id = manager.create({ cwd: '/tmp', onExit: vi.fn() });
+      mockPty._emit('exit', { exitCode: 0, signal: 0 });
+      expect(manager.has(id)).toBe(false);
+    });
+  });
+
+  describe('additional create edge cases', () => {
+    it('uses os.homedir() as cwd when none is provided', () => {
+      const os = require('os');
+      manager.create({});
+      expect(lastSpawnArgs[2].cwd).toBe(os.homedir());
+    });
+
+    it('sets LANG env var in spawned process', () => {
+      manager.create({ cwd: '/tmp' });
+      expect(lastSpawnArgs[2].env.LANG).toBeDefined();
+    });
+
+    it('passes shell as first argument to spawn', () => {
+      manager.create({ cwd: '/tmp' });
+      // First spawn arg is the shell path (or fallback /bin/bash)
+      expect(typeof lastSpawnArgs[0]).toBe('string');
+      expect(lastSpawnArgs[0].length).toBeGreaterThan(0);
+    });
+
+    it('passes empty args array as second argument to spawn', () => {
+      manager.create({ cwd: '/tmp' });
+      expect(lastSpawnArgs[1]).toEqual([]);
+    });
+
+    it('onData fires multiple times for multiple data events', () => {
+      const received = [];
+      const id = manager.create({
+        cwd: '/tmp',
+        onData: (sid, data) => received.push(data)
+      });
+      mockPty._emit('data', 'chunk1');
+      mockPty._emit('data', 'chunk2');
+      mockPty._emit('data', 'chunk3');
+      expect(received).toEqual(['chunk1', 'chunk2', 'chunk3']);
+    });
+
+    it('signal value is passed to onExit', () => {
+      const exitArgs = [];
+      const id = manager.create({
+        cwd: '/tmp',
+        onExit: (sid, code, sig) => exitArgs.push({ code, sig })
+      });
+      mockPty._emit('exit', { exitCode: 130, signal: 2 });
+      expect(exitArgs[0]).toEqual({ code: 130, sig: 2 });
     });
   });
 });

@@ -4,6 +4,7 @@
  * Uses _setExec to inject a mock exec function, avoiding CJS mocking issues.
  */
 
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { openTerminal, openClaudeWithCommand, openPartyMode, _setExec } from '../lib/terminal-launcher.js';
 
 describe('terminal-launcher', () => {
@@ -12,10 +13,6 @@ describe('terminal-launcher', () => {
   beforeEach(() => {
     execMock = vi.fn();
     _setExec(execMock);
-  });
-
-  afterEach(() => {
-    _setExec(null);
   });
 
   describe('openTerminal', () => {
@@ -57,12 +54,59 @@ describe('terminal-launcher', () => {
     });
   });
 
+  describe('single-quote escaping', () => {
+    it('resolves without error when project path contains single quotes', async () => {
+      execMock.mockImplementation((cmd, cb) => cb(null));
+      await expect(openTerminal("/tmp/O'Brien's project", 'ls')).resolves.toBeUndefined();
+      expect(execMock).toHaveBeenCalledOnce();
+    });
+
+    it("applies the shell escape sequence \\' to single quotes in paths", async () => {
+      execMock.mockImplementation((cmd, cb) => cb(null));
+      await openTerminal("/tmp/O'Brien", 'ls');
+      const cmd = execMock.mock.calls[0][0];
+      // The shell escape replaces ' with '\'' in the embedded AppleScript
+      expect(cmd).toContain("'\\''");
+    });
+
+    it('escapes single quotes in command without rejecting', async () => {
+      execMock.mockImplementation((cmd, cb) => cb(null));
+      await expect(openTerminal('/tmp/proj', "echo 'hello world'")).resolves.toBeUndefined();
+      expect(execMock).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('_setExec', () => {
+    it('swaps exec implementation so new calls use the injected function', async () => {
+      const first = vi.fn((cmd, cb) => cb(null));
+      const second = vi.fn((cmd, cb) => cb(null));
+      _setExec(first);
+      await openTerminal('/tmp/a', 'ls');
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+
+      _setExec(second);
+      await openTerminal('/tmp/b', 'ls');
+      expect(second).toHaveBeenCalledOnce();
+      // first should still only have been called once
+      expect(first).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('openClaudeWithCommand', () => {
     it('delegates to openTerminal', async () => {
       execMock.mockImplementation((cmd, cb) => cb(null));
       await openClaudeWithCommand('/tmp/proj', 'claude "/dev"');
       expect(execMock.mock.calls[0][0]).toContain('/tmp/proj');
       expect(execMock.mock.calls[0][0]).toContain('claude');
+    });
+
+    it('passes the full claude command string through', async () => {
+      execMock.mockImplementation((cmd, cb) => cb(null));
+      await openClaudeWithCommand('/tmp/proj', 'claude "/implement 1-1-auth"');
+      const cmd = execMock.mock.calls[0][0];
+      expect(cmd).toContain('implement');
+      expect(cmd).toContain('1-1-auth');
     });
   });
 
@@ -71,6 +115,12 @@ describe('terminal-launcher', () => {
       execMock.mockImplementation((cmd, cb) => cb(null));
       await openPartyMode('/tmp/proj');
       expect(execMock.mock.calls[0][0]).toContain('retrospective');
+    });
+
+    it('uses the provided project path', async () => {
+      execMock.mockImplementation((cmd, cb) => cb(null));
+      await openPartyMode('/home/user/my-project');
+      expect(execMock.mock.calls[0][0]).toContain('/home/user/my-project');
     });
   });
 });
