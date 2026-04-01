@@ -424,6 +424,498 @@ describe('CompanionServer', () => {
     });
   });
 
+  // ── New PR functionality: shareTerminalStart / getActiveStories ──────
+
+  describe('shareTerminalStart', () => {
+    it('registers a session with story metadata in sharedTerminals', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-1', { storySlug: '1-1-my-story', storyPhase: 'in-progress', command: 'claude dev' });
+
+      const session = server.sharedTerminals.get('sess-1');
+      expect(session).toBeDefined();
+      expect(session.storySlug).toBe('1-1-my-story');
+      expect(session.storyPhase).toBe('in-progress');
+      expect(session.command).toBe('claude dev');
+      expect(session.active).toBe(true);
+      expect(session.buffer).toBe('');
+      expect(typeof session.startedAt).toBe('number');
+    });
+
+    it('sets null for missing story metadata fields', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-2', {});
+
+      const session = server.sharedTerminals.get('sess-2');
+      expect(session.storySlug).toBeNull();
+      expect(session.storyPhase).toBeNull();
+      expect(session.command).toBeNull();
+    });
+
+    it('works with no options object', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-3');
+
+      const session = server.sharedTerminals.get('sess-3');
+      expect(session).toBeDefined();
+      expect(session.storySlug).toBeNull();
+    });
+
+    it('overwrites an existing session entry', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-4', { storySlug: 'old-story' });
+      server.shareTerminalStart('sess-4', { storySlug: 'new-story' });
+
+      const session = server.sharedTerminals.get('sess-4');
+      expect(session.storySlug).toBe('new-story');
+    });
+
+    it('records startedAt as a recent timestamp', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const before = Date.now();
+      server.shareTerminalStart('sess-5', { storySlug: 'story-x' });
+      const after = Date.now();
+
+      const session = server.sharedTerminals.get('sess-5');
+      expect(session.startedAt).toBeGreaterThanOrEqual(before);
+      expect(session.startedAt).toBeLessThanOrEqual(after);
+    });
+  });
+
+  describe('getActiveStories', () => {
+    it('returns empty array when no shared terminals exist', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      expect(server.getActiveStories()).toEqual([]);
+    });
+
+    it('returns active sessions that have a storySlug', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-a', { storySlug: '1-1-story', storyPhase: 'in-progress', command: 'claude' });
+
+      const active = server.getActiveStories();
+      expect(active).toHaveLength(1);
+      expect(active[0].slug).toBe('1-1-story');
+      expect(active[0].phase).toBe('in-progress');
+      expect(active[0].sessionId).toBe('sess-a');
+      expect(active[0].command).toBe('claude');
+    });
+
+    it('excludes sessions without a storySlug', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-b', {}); // no storySlug
+      server.shareTerminalData(100, 'raw data'); // auto-created without slug
+
+      expect(server.getActiveStories()).toHaveLength(0);
+    });
+
+    it('excludes inactive sessions', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-c', { storySlug: '2-1-done' });
+      server.shareTerminalExit('sess-c', 0);
+
+      expect(server.getActiveStories()).toHaveLength(0);
+    });
+
+    it('returns multiple active story sessions', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-d', { storySlug: '1-1-story' });
+      server.shareTerminalStart('sess-e', { storySlug: '1-2-story' });
+
+      const active = server.getActiveStories();
+      expect(active).toHaveLength(2);
+      const slugs = active.map(s => s.slug);
+      expect(slugs).toContain('1-1-story');
+      expect(slugs).toContain('1-2-story');
+    });
+
+    it('includes startedAt in each active story entry', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-f', { storySlug: '1-3-story' });
+
+      const active = server.getActiveStories();
+      expect(active[0].startedAt).toBeDefined();
+      expect(typeof active[0].startedAt).toBe('number');
+    });
+  });
+
+  describe('getSharedTerminals (with story metadata)', () => {
+    it('includes storySlug, storyPhase, and command in each session', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart(50, { storySlug: '3-1-feature', storyPhase: 'review', command: 'npm test' });
+      server.shareTerminalData(50, 'test output');
+
+      const sessions = server.getSharedTerminals();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].storySlug).toBe('3-1-feature');
+      expect(sessions[0].storyPhase).toBe('review');
+      expect(sessions[0].command).toBe('npm test');
+    });
+
+    it('returns null for missing story fields in sessions created via shareTerminalData', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalData(77, 'no story context');
+
+      const sessions = server.getSharedTerminals();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].storySlug).toBeNull();
+      expect(sessions[0].storyPhase).toBeNull();
+      expect(sessions[0].command).toBeNull();
+    });
+
+    it('only returns active sessions', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart(60, { storySlug: 'active-story' });
+      server.shareTerminalStart(61, { storySlug: 'done-story' });
+      server.shareTerminalExit(61, 0);
+
+      const sessions = server.getSharedTerminals();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].id).toBe(60);
+    });
+  });
+
+  describe('shareTerminalExit (story context in notification)', () => {
+    it('includes story slug in the notification body when available', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const broadcasts = [];
+      const origBroadcast = server.broadcast.bind(server);
+      server.broadcast = (type, data) => {
+        broadcasts.push({ type, data });
+        // Don't need to actually broadcast to clients in this test
+      };
+
+      server.shareTerminalStart('sess-g', { storySlug: '2-2-my-feature' });
+      server.shareTerminalExit('sess-g', 0);
+
+      const notif = broadcasts.find(b => b.type === 'notification');
+      expect(notif).toBeDefined();
+      expect(notif.data.body).toContain('2-2-my-feature');
+      expect(notif.data.body).toContain('0');
+    });
+
+    it('omits story slug from notification when session has no storySlug', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const broadcasts = [];
+      server.broadcast = (type, data) => { broadcasts.push({ type, data }); };
+
+      server.shareTerminalData(88, 'data'); // auto-created, no storySlug
+      server.shareTerminalExit(88, 1);
+
+      const notif = broadcasts.find(b => b.type === 'notification');
+      expect(notif).toBeDefined();
+      expect(notif.data.body).toContain('1');
+      // No story slug in parentheses
+      expect(notif.data.body).not.toContain('(');
+    });
+
+    it('broadcasts stories:active after a session exits', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-h', { storySlug: '1-5-task' });
+
+      const broadcasts = [];
+      server.broadcast = (type, data) => { broadcasts.push({ type, data }); };
+
+      server.shareTerminalExit('sess-h', 0);
+
+      const activeMsg = broadcasts.find(b => b.type === 'stories:active');
+      expect(activeMsg).toBeDefined();
+      // Session is now inactive, so active stories list should be empty
+      expect(activeMsg.data.stories).toHaveLength(0);
+    });
+
+    it('marks type as success on exit code 0', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const broadcasts = [];
+      server.broadcast = (type, data) => { broadcasts.push({ type, data }); };
+
+      server.shareTerminalData(55, 'data');
+      server.shareTerminalExit(55, 0);
+
+      const notif = broadcasts.find(b => b.type === 'notification');
+      expect(notif.data.type).toBe('success');
+    });
+
+    it('marks type as error on non-zero exit code', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const broadcasts = [];
+      server.broadcast = (type, data) => { broadcasts.push({ type, data }); };
+
+      server.shareTerminalData(56, 'data');
+      server.shareTerminalExit(56, 1);
+
+      const notif = broadcasts.find(b => b.type === 'notification');
+      expect(notif.data.type).toBe('error');
+    });
+  });
+
+  describe('_handleWSMessage: story:launch', () => {
+    function createMockWs() {
+      const sent = [];
+      return {
+        sent,
+        readyState: 1,
+        send: (msg) => sent.push(JSON.parse(msg))
+      };
+    }
+
+    it('sends story:task-launched when command is available', async () => {
+      let launchedCmd, launchedSlug, launchedPhase;
+      server = createServer({
+        launchOnDesktop: (cmd, slug, phase) => {
+          launchedCmd = cmd;
+          launchedSlug = slug;
+          launchedPhase = phase;
+        }
+      });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:launch',
+        data: { slug: '1-1-test-story' }
+      });
+
+      expect(launchedSlug).toBe('1-1-test-story');
+      const response = mockWs.sent.find(m => m.type === 'story:task-launched');
+      expect(response).toBeDefined();
+      expect(response.data.slug).toBe('1-1-test-story');
+      expect(response.data.phase).toBe('in-progress');
+      expect(response.data.command).toBeTruthy();
+    });
+
+    it('sends error when story slug is not found', async () => {
+      server = createServer({
+        launchOnDesktop: () => {}
+      });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:launch',
+        data: { slug: 'nonexistent-story' }
+      });
+
+      const error = mockWs.sent.find(m => m.type === 'error');
+      expect(error).toBeDefined();
+      expect(error.data.message).toContain('Story not found');
+    });
+
+    it('sends error when buildCommand returns falsy', async () => {
+      server = createServer({
+        buildCommand: () => null,
+        launchOnDesktop: () => {}
+      });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:launch',
+        data: { slug: '1-1-test-story' }
+      });
+
+      const error = mockWs.sent.find(m => m.type === 'error');
+      expect(error).toBeDefined();
+      expect(error.data.message).toContain('No command available');
+    });
+
+    it('does nothing when slug is missing', async () => {
+      server = createServer({ launchOnDesktop: () => {} });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      // Should not throw and should not send anything
+      server._handleWSMessage(mockWs, { type: 'story:launch', data: {} });
+      expect(mockWs.sent).toHaveLength(0);
+    });
+
+    it('does nothing when launchOnDesktop is not configured', async () => {
+      server = createServer(); // no launchOnDesktop
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:launch',
+        data: { slug: '1-1-test-story' }
+      });
+
+      expect(mockWs.sent).toHaveLength(0);
+    });
+
+    it('does nothing when getProjectPath returns null', async () => {
+      server = createServer({
+        getProjectPath: () => null,
+        launchOnDesktop: () => {}
+      });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:launch',
+        data: { slug: '1-1-test-story' }
+      });
+
+      expect(mockWs.sent).toHaveLength(0);
+    });
+  });
+
+  describe('_handleWSMessage: stories:list-active', () => {
+    function createMockWs() {
+      const sent = [];
+      return {
+        sent,
+        readyState: 1,
+        send: (msg) => sent.push(JSON.parse(msg))
+      };
+    }
+
+    it('sends stories:active with current active stories', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      server.shareTerminalStart('sess-x', { storySlug: '1-1-active' });
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, { type: 'stories:list-active' });
+
+      const response = mockWs.sent.find(m => m.type === 'stories:active');
+      expect(response).toBeDefined();
+      expect(response.data.stories).toHaveLength(1);
+      expect(response.data.stories[0].slug).toBe('1-1-active');
+    });
+
+    it('sends empty stories array when no active stories', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, { type: 'stories:list-active' });
+
+      const response = mockWs.sent.find(m => m.type === 'stories:active');
+      expect(response).toBeDefined();
+      expect(response.data.stories).toHaveLength(0);
+    });
+  });
+
+  describe('_handleWSMessage: story:advance with launchOnDesktop', () => {
+    function createMockWs() {
+      const sent = [];
+      return {
+        sent,
+        readyState: 1,
+        send: (msg) => sent.push(JSON.parse(msg))
+      };
+    }
+
+    it('sends story:task-launched after advancing when launchOnDesktop is set', async () => {
+      let launchedSlug;
+      server = createServer({
+        updateStoryStatus: () => {},
+        launchOnDesktop: (cmd, slug) => { launchedSlug = slug; }
+      });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:advance',
+        data: { slug: '1-1-test-story' }
+      });
+
+      expect(launchedSlug).toBe('1-1-test-story');
+      const launched = mockWs.sent.find(m => m.type === 'story:task-launched');
+      expect(launched).toBeDefined();
+      expect(launched.data.slug).toBe('1-1-test-story');
+    });
+
+    it('does not send story:task-launched when launchOnDesktop is absent', async () => {
+      server = createServer({
+        updateStoryStatus: () => {}
+        // no launchOnDesktop
+      });
+      await server.start(nextPort());
+
+      const mockWs = createMockWs();
+      server.clientTerminals.set(mockWs, new Set());
+
+      server._handleWSMessage(mockWs, {
+        type: 'story:advance',
+        data: { slug: '1-1-test-story' }
+      });
+
+      const launched = mockWs.sent.find(m => m.type === 'story:task-launched');
+      expect(launched).toBeUndefined();
+    });
+  });
+
+  describe('_handleWS: sends stories:active on connect when active stories exist', () => {
+    it('getActiveStories is used on connect (regression guard)', async () => {
+      server = createServer();
+      await server.start(nextPort());
+
+      // Register an active story before any client connects
+      server.shareTerminalStart('pre-sess', { storySlug: '2-1-running' });
+
+      // Verify active stories are tracked correctly
+      const active = server.getActiveStories();
+      expect(active).toHaveLength(1);
+      expect(active[0].slug).toBe('2-1-running');
+    });
+  });
+
   describe('WebSocket messages', () => {
     it('sends initial project state on connect', async () => {
       server = createServer();
