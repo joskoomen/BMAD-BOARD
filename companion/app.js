@@ -224,8 +224,8 @@ function scheduleReconnect() {
 }
 
 /**
- * Dispatch an incoming WebSocket message to the appropriate handler.
- * @param {Object} msg - Parsed JSON message with a `type` field.
+ * Route an incoming WebSocket message to the matching handler, updating application state, UI, or notifications as needed.
+ * @param {Object} msg - Parsed message object; must include a `type` string and an optional `data` payload whose shape depends on `type`.
  */
 function handleWSMessage(msg) {
   switch (msg.type) {
@@ -421,7 +421,13 @@ function handleRefresh() {
 
 // ── Renderers ───────────────────────────────────────────────────────────
 
-/** Render the epic cards grid on the dashboard from current project data. */
+/**
+ * Render the dashboard's epic grid using the current project data and update related UI elements.
+ *
+ * Updates the project name and meta summary, then builds an epic card for each epic showing:
+ * epic number, phase pill, title, a progress bar with completed/total counts, and per-story phase dots.
+ * Stories that are currently active (have running desktop terminals) receive the `pulsing` class on their dot.
+ */
 function renderDashboard() {
   if (!projectData) return;
 
@@ -635,13 +641,22 @@ function findStory(slug) {
 
 // ── Active Stories Helpers ──────────────────────────────────────────────
 
-/** Check if a story has an active terminal session on the desktop. */
+/**
+ * Determine whether a story currently has an active desktop terminal session.
+ * @param {string} slug - The story's slug identifier.
+ * @returns {Object|null} The matching active story object from `activeStories` if found, `null` otherwise.
+ */
 function isStoryActive(slug) {
   return activeStories.find(s => s.slug === slug) || null;
 }
 
 /**
- * Launch a phase command on the desktop without advancing the story phase.
+ * Prompt the user and request the server to run the story's current phase command on a desktop host.
+ *
+ * If no open WebSocket connection exists, displays a "Not connected" toast and does nothing. Prompts the
+ * user for confirmation; on confirmation sends a `story:launch` message with the story slug and shows a
+ * "Launching on desktop..." toast.
+ *
  * @param {string} slug - The story slug identifier.
  */
 function launchStory(slug) {
