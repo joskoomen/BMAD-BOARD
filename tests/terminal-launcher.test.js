@@ -4,7 +4,6 @@
  * Uses _setExec to inject a mock exec function, avoiding CJS mocking issues.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { openTerminal, openClaudeWithCommand, openPartyMode, _setExec } from '../lib/terminal-launcher.js';
 
 describe('terminal-launcher', () => {
