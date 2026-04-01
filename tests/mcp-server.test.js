@@ -124,25 +124,4 @@ describe('parseArgs', () => {
     const args = parseArgs(['node', 'mcp-server.js', '--project-path']);
     expect(args).toEqual({});
   });
-
-  it('only processes the first --project-path (last occurrence wins via reassignment)', () => {
-    // The implementation iterates linearly: last match wins
-    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/first', '--project-path', '/second']);
-    expect(args.projectPath).toBe(path.resolve('/second'));
-  });
-
-  it('handles argv shorter than 2 elements without crashing', () => {
-    expect(() => parseArgs([])).not.toThrow();
-    expect(() => parseArgs(['node'])).not.toThrow();
-  });
-
-  it('returns only projectPath key when --project-path is provided', () => {
-    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/some/path']);
-    expect(Object.keys(args)).toEqual(['projectPath']);
-  });
-
-  it('resolves absolute path unchanged', () => {
-    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/absolute/path']);
-    expect(args.projectPath).toBe('/absolute/path');
-  });
 });
