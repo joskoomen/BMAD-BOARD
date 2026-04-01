@@ -26,9 +26,6 @@ let sharedTerminalSessions = [];
 // Active stories (stories with running terminal sessions on desktop)
 let activeStories = [];
 
-// Pending terminal switch: set when a task is launched and cleared when shared-list arrives
-let pendingTerminalSwitch = false;
-
 const PHASES = {
   'backlog':       { label: 'Backlog',     icon: '\u25CB', color: 'var(--phase-backlog)' },
   'ready-for-dev': { label: 'Ready',       icon: '\u25D0', color: 'var(--phase-ready)' },
@@ -212,7 +209,14 @@ function connectWebSocket() {
   };
 }
 
-/** Schedule a WebSocket reconnection with exponential backoff. */
+/**
+ * Schedule the next WebSocket reconnection attempt using exponential backoff.
+ *
+ * Clears any existing reconnect timer, increments the reconnect attempt counter, and
+ * aborts immediately if the maximum attempts have been reached. The delay is
+ * calculated as 1000 * 2^attempts and capped at 30000 ms. When the timer fires,
+ * `connectWebSocket()` is invoked if there is no active open WebSocket.
+ */
 function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
@@ -227,8 +231,9 @@ function scheduleReconnect() {
 }
 
 /**
- * Route an incoming WebSocket message to the matching handler, updating application state, UI, or notifications as needed.
- * @param {Object} msg - Parsed message object; must include a `type` string and an optional `data` payload whose shape depends on `type`.
+ * Dispatches a parsed WebSocket message to the appropriate handler to update application state, UI, or show notifications.
+ * Handles messages such as project state updates, terminal lifecycle/data events (including shared desktop terminals), story phase changes, active-stories updates, task-launched events, and server notifications.
+ * @param {Object} msg - Parsed message object. Must include a `type` string and an optional `data` payload whose shape depends on `type`.
  */
 function handleWSMessage(msg) {
   switch (msg.type) {
@@ -270,13 +275,6 @@ function handleWSMessage(msg) {
     case 'terminal:shared-list':
       sharedTerminalSessions = msg.data.sessions || [];
       updateTerminalModeIndicator();
-      // If a task was just launched, switch to watching the latest shared terminal
-      if (pendingTerminalSwitch && sharedTerminalSessions.length > 0) {
-        pendingTerminalSwitch = false;
-        setSharedMode(true);
-        watchSharedTerminal(sharedTerminalSessions[sharedTerminalSessions.length - 1].id);
-        showTerminal();
-      }
       break;
 
     // Story phase advance
@@ -296,12 +294,18 @@ function handleWSMessage(msg) {
     case 'story:task-launched': {
       const { slug, phase, command } = msg.data;
       showLocalNotification('Task Launched', `${phase} command running for ${slug}`);
-      // Request shared terminal list; the terminal:shared-list handler will
-      // detect pendingTerminalSwitch and auto-switch to the latest session
-      pendingTerminalSwitch = true;
+      // Auto-switch to terminal to watch the task
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'terminal:list-shared' }));
       }
+      // Small delay to let shared terminal list update, then switch
+      setTimeout(() => {
+        if (sharedTerminalSessions.length > 0) {
+          setSharedMode(true);
+          watchSharedTerminal(sharedTerminalSessions[sharedTerminalSessions.length - 1].id);
+          showTerminal();
+        }
+      }, 500);
       break;
     }
 
@@ -426,11 +430,11 @@ function handleRefresh() {
 // ── Renderers ───────────────────────────────────────────────────────────
 
 /**
- * Render the dashboard's epic grid using the current project data and update related UI elements.
+ * Render the dashboard epic grid and update project header metadata.
  *
- * Updates the project name and meta summary, then builds an epic card for each epic showing:
- * epic number, phase pill, title, a progress bar with completed/total counts, and per-story phase dots.
- * Stories that are currently active (have running desktop terminals) receive the `pulsing` class on their dot.
+ * Updates the project name and meta summary, then rebuilds the epics grid with one card per epic
+ * showing the epic number, phase pill, title, progress (done/total and fill), and per-story phase dots.
+ * Story dots receive the `pulsing` class when the story is currently active (has a running desktop terminal).
  */
 function renderDashboard() {
   if (!projectData) return;
@@ -504,7 +508,14 @@ function renderDashboard() {
   }
 }
 
-/** Render the story list for the currently selected epic. */
+/**
+ * Render the story list and related controls for the currently selected epic.
+ *
+ * Updates DOM elements (epic status, title, and the stories list) to reflect the
+ * latest epic data; re-resolves the current epic from project data when available,
+ * marks stories that have active desktop sessions, and adds per-story action buttons
+ * for launching or advancing a story as appropriate.
+ */
 function renderEpicDetail() {
   if (!currentEpic) return;
 
@@ -655,11 +666,10 @@ function isStoryActive(slug) {
 }
 
 /**
- * Prompt the user and request the server to run the story's current phase command on a desktop host.
+ * Request the server to run the story's current-phase command on a desktop host.
  *
- * If no open WebSocket connection exists, displays a "Not connected" toast and does nothing. Prompts the
- * user for confirmation; on confirmation sends a `story:launch` message with the story slug and shows a
- * "Launching on desktop..." toast.
+ * Prompts the user for confirmation; if confirmed and a WebSocket is open, sends a `story:launch` message for the given slug.
+ * Shows a "Not connected" toast when no socket is available and shows "Launching on desktop..." after sending the request.
  *
  * @param {string} slug - The story slug identifier.
  */
@@ -684,7 +694,12 @@ function launchStory(slug) {
   showToast('Launching on desktop...');
 }
 
-/** Update the badge count on the Terminal nav button. */
+/**
+ * Update the terminal navigation badge to reflect the number of active desktop stories.
+ *
+ * If there are active stories, sets the badge's text to the count and makes it visible;
+ * otherwise hides the badge. Does nothing if the badge element is not present.
+ */
 function updateNavBadge() {
   const badge = document.getElementById('nav-badge');
   if (!badge) return;
