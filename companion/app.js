@@ -26,6 +26,9 @@ let sharedTerminalSessions = [];
 // Active stories (stories with running terminal sessions on desktop)
 let activeStories = [];
 
+// Pending terminal switch: set when a task is launched and cleared when shared-list arrives
+let pendingTerminalSwitch = false;
+
 const PHASES = {
   'backlog':       { label: 'Backlog',     icon: '\u25CB', color: 'var(--phase-backlog)' },
   'ready-for-dev': { label: 'Ready',       icon: '\u25D0', color: 'var(--phase-ready)' },
@@ -267,6 +270,13 @@ function handleWSMessage(msg) {
     case 'terminal:shared-list':
       sharedTerminalSessions = msg.data.sessions || [];
       updateTerminalModeIndicator();
+      // If a task was just launched, switch to watching the latest shared terminal
+      if (pendingTerminalSwitch && sharedTerminalSessions.length > 0) {
+        pendingTerminalSwitch = false;
+        setSharedMode(true);
+        watchSharedTerminal(sharedTerminalSessions[sharedTerminalSessions.length - 1].id);
+        showTerminal();
+      }
       break;
 
     // Story phase advance
@@ -286,18 +296,12 @@ function handleWSMessage(msg) {
     case 'story:task-launched': {
       const { slug, phase, command } = msg.data;
       showLocalNotification('Task Launched', `${phase} command running for ${slug}`);
-      // Auto-switch to terminal to watch the task
+      // Request shared terminal list; the terminal:shared-list handler will
+      // detect pendingTerminalSwitch and auto-switch to the latest session
+      pendingTerminalSwitch = true;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'terminal:list-shared' }));
       }
-      // Small delay to let shared terminal list update, then switch
-      setTimeout(() => {
-        if (sharedTerminalSessions.length > 0) {
-          setSharedMode(true);
-          watchSharedTerminal(sharedTerminalSessions[sharedTerminalSessions.length - 1].id);
-          showTerminal();
-        }
-      }, 500);
       break;
     }
 
