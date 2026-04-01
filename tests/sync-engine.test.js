@@ -580,7 +580,7 @@ describe('SyncEngine', () => {
       engine.configure('obsidian', { vaultPath: '/tmp' });
       const state = engine.getState();
       expect(state.provider).toBe('obsidian');
-      // Verify it is a copy
+      // Verify top-level properties are independent
       state.provider = 'changed';
       expect(engine.state.provider).toBe('obsidian');
     });

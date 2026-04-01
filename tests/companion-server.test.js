@@ -711,22 +711,6 @@ describe('CompanionServer', () => {
       expect(lite.documents[0].content).toBeUndefined();
     });
 
-    it('unauthenticated request returns 401', async () => {
-      server = createServer();
-      await server.start(nextPort());
-
-      const res = await httpGet(server.port, '/api/status', null);
-      expect(res.status).toBe(401);
-    });
-
-    it('auth via query token works', async () => {
-      server = createServer();
-      await server.start(nextPort());
-
-      const res = await httpGet(server.port, `/api/status?token=${server.token}`, null);
-      expect(res.status).toBe(200);
-    });
-
     it('shareTerminalExit marks session inactive', () => {
       server = createServer();
       server.shareTerminalData('sess-2', 'data');

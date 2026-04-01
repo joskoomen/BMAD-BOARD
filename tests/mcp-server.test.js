@@ -1,4 +1,3 @@
-import { vi } from 'vitest';
 import path from 'path';
 import { getSyncProviderList, getSyncProviderKeys, getSyncProvider } from '../lib/sync-providers.js';
 import { SyncEngine } from '../lib/sync-engine.js';
