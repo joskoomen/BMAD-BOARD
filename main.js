@@ -847,6 +847,18 @@ ipcMain.handle('companion:regenerate-token', () => {
   return companionServer.getConnectionInfo();
 });
 
+/** Receive terminal tab metadata from renderer for companion sharing.
+ * Registers story context so companion clients can see active stories.
+ */
+ipcMain.on('terminal:tab-meta', (event, data) => {
+  if (companionServer && data?.sessionId) {
+    companionServer.shareTerminalStart(data.sessionId, {
+      storySlug: data.storySlug,
+      storyPhase: data.storyPhase
+    });
+  }
+});
+
 // ── IPC: Sync Providers ────────────────────────────────────────────────
 
 const syncEngineCache = new Map();

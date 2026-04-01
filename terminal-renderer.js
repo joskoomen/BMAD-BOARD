@@ -509,6 +509,15 @@ async function createPtyForTab(tab) {
   const result = await window.api.terminalCreate({ cols, rows });
   tab.sessionId = result.id;
 
+  // Notify main process of story context for companion terminal sharing
+  if (tab.storySlug) {
+    window.api.terminalTabMeta({
+      sessionId: result.id,
+      storySlug: tab.storySlug,
+      storyPhase: tab.storyPhase
+    });
+  }
+
   tab.cleanupData = window.api.onTerminalData((id, data) => {
     if (id === tab.sessionId && tab.term) {
       tab.term.write(data);

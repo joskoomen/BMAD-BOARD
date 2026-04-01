@@ -381,6 +381,33 @@ html, body {
 .phase-pill[data-phase="review"] { background: rgba(139,92,246,0.2); color: var(--phase-review); }
 .phase-pill[data-phase="done"] { background: rgba(16,185,129,0.2); color: var(--phase-done); }
 
+/* ── Active Story Indicator ───────────────────────────────────────────── */
+
+.story-active {
+  border-left: 3px solid var(--phase-progress);
+  animation: story-pulse 2s ease-in-out infinite;
+}
+
+@keyframes story-pulse {
+  0%, 100% { border-left-color: var(--phase-progress); }
+  50% { border-left-color: var(--accent); }
+}
+
+.active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--phase-progress);
+  animation: pulse 1s infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.phase-dot.pulsing {
+  animation: pulse 1s infinite;
+  box-shadow: 0 0 4px currentColor;
+}
+
 /* ── Story Actions ────────────────────────────────────────────────────── */
 
 .story-actions {
@@ -409,6 +436,35 @@ html, body {
 }
 
 .btn-advance svg {
+  flex-shrink: 0;
+}
+
+.btn-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--phase-progress);
+  border: 1px solid var(--phase-progress);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.btn-run:active {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.btn-run.running {
+  opacity: 0.6;
+  pointer-events: none;
+  animation: pulse 1.5s infinite;
+}
+
+.btn-run svg {
   flex-shrink: 0;
 }
 
@@ -522,6 +578,23 @@ html, body {
   font-size: 10px;
   cursor: pointer;
   transition: color 150ms ease;
+  position: relative;
+}
+
+.nav-badge {
+  position: absolute;
+  top: 2px;
+  right: calc(50% - 20px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
 }
 
 .nav-item.active {

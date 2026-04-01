@@ -197,5 +197,8 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, payload) => callback(payload);
     ipcRenderer.on('companion-launch-command', handler);
     return () => ipcRenderer.removeListener('companion-launch-command', handler);
-  }
+  },
+
+  // Send terminal tab metadata (story context) to main process for companion sharing
+  terminalTabMeta: (data) => ipcRenderer.send('terminal:tab-meta', data)
 });

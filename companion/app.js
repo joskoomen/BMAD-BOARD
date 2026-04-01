@@ -23,6 +23,9 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 let watchingSharedTerminal = null;
 let sharedTerminalSessions = [];
 
+// Active stories (stories with running terminal sessions on desktop)
+let activeStories = [];
+
 const PHASES = {
   'backlog':       { label: 'Backlog',     icon: '\u25CB', color: 'var(--phase-backlog)' },
   'ready-for-dev': { label: 'Ready',       icon: '\u25D0', color: 'var(--phase-ready)' },
@@ -271,6 +274,33 @@ function handleWSMessage(msg) {
       showToast(`${msg.data.slug}: ${msg.data.oldPhase} \u2192 ${msg.data.newPhase}`);
       break;
 
+    // Active stories state update
+    case 'stories:active':
+      activeStories = msg.data.stories || [];
+      if (currentView === 'dashboard') renderDashboard();
+      else if (currentView === 'epic' && currentEpic) renderEpicDetail();
+      updateNavBadge();
+      break;
+
+    // Task launched feedback — command is now running on desktop
+    case 'story:task-launched': {
+      const { slug, phase, command } = msg.data;
+      showLocalNotification('Task Launched', `${phase} command running for ${slug}`);
+      // Auto-switch to terminal to watch the task
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal:list-shared' }));
+      }
+      // Small delay to let shared terminal list update, then switch
+      setTimeout(() => {
+        if (sharedTerminalSessions.length > 0) {
+          setSharedMode(true);
+          watchSharedTerminal(sharedTerminalSessions[sharedTerminalSessions.length - 1].id);
+          showTerminal();
+        }
+      }, 500);
+      break;
+    }
+
     // Notifications from server
     case 'notification':
       showLocalNotification(msg.data.title, msg.data.body);
@@ -450,7 +480,7 @@ function renderDashboard() {
     summary.className = 'phase-summary';
     for (const s of epic.stories) {
       const dot = document.createElement('div');
-      dot.className = 'phase-dot';
+      dot.className = 'phase-dot' + (isStoryActive(s.slug) ? ' pulsing' : '');
       dot.style.background = PHASES[s.status]?.color || 'var(--phase-backlog)';
       dot.title = s.title;
       summary.appendChild(dot);
@@ -481,10 +511,12 @@ function renderEpicDetail() {
 
   for (const story of epic.stories) {
     const card = document.createElement('div');
-    card.className = 'story-card';
+    const active = isStoryActive(story.slug);
+    card.className = 'story-card' + (active ? ' story-active' : '');
 
     const canAdvance = story.status !== 'done';
     const nextPhase = canAdvance ? PHASE_ORDER[PHASE_ORDER.indexOf(story.status) + 1] : null;
+    const canLaunch = ['ready-for-dev', 'in-progress', 'review'].includes(story.status);
 
     // Story number
     const num = document.createElement('div');
@@ -497,29 +529,59 @@ function renderEpicDetail() {
     const titleSpan = document.createElement('span');
     titleSpan.className = 'story-title';
     titleSpan.textContent = story.title;
+    const pillWrap = document.createElement('span');
+    pillWrap.style.display = 'inline-flex';
+    pillWrap.style.alignItems = 'center';
+    pillWrap.style.gap = '4px';
     const pill = document.createElement('span');
     pill.className = 'phase-pill';
     pill.setAttribute('data-phase', story.status);
     pill.textContent = PHASES[story.status]?.label || story.status;
+    pillWrap.appendChild(pill);
+    if (active) {
+      const dot = document.createElement('span');
+      dot.className = 'active-dot';
+      dot.title = 'Running on desktop';
+      pillWrap.appendChild(dot);
+    }
     header.appendChild(titleSpan);
-    header.appendChild(pill);
+    header.appendChild(pillWrap);
 
     card.appendChild(num);
     card.appendChild(header);
 
-    // Advance button
-    if (canAdvance && nextPhase) {
+    // Action buttons
+    if (canAdvance || canLaunch) {
       const actions = document.createElement('div');
       actions.className = 'story-actions';
-      const btn = document.createElement('button');
-      btn.className = 'btn-advance';
-      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
-      btn.appendChild(document.createTextNode(` ${PHASES[nextPhase]?.label || nextPhase}`));
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        advanceStory(story.slug);
-      });
-      actions.appendChild(btn);
+
+      // Run button (re-run current phase without advancing)
+      if (canLaunch) {
+        const runBtn = document.createElement('button');
+        runBtn.className = 'btn-run' + (active ? ' running' : '');
+        runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+        runBtn.appendChild(document.createTextNode(active ? ' Running' : ' Run'));
+        if (active) runBtn.disabled = true;
+        runBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          launchStory(story.slug);
+        });
+        actions.appendChild(runBtn);
+      }
+
+      // Advance button
+      if (canAdvance && nextPhase) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-advance';
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+        btn.appendChild(document.createTextNode(` ${PHASES[nextPhase]?.label || nextPhase}`));
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          advanceStory(story.slug);
+        });
+        actions.appendChild(btn);
+      }
+
       card.appendChild(actions);
     }
 
@@ -569,6 +631,50 @@ function findStory(slug) {
     if (story) return story;
   }
   return null;
+}
+
+// ── Active Stories Helpers ──────────────────────────────────────────────
+
+/** Check if a story has an active terminal session on the desktop. */
+function isStoryActive(slug) {
+  return activeStories.find(s => s.slug === slug) || null;
+}
+
+/**
+ * Launch a phase command on the desktop without advancing the story phase.
+ * @param {string} slug - The story slug identifier.
+ */
+function launchStory(slug) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast('Not connected');
+    return;
+  }
+
+  const story = findStory(slug);
+  if (!story) return;
+
+  const phaseName = PHASES[story.status]?.label || story.status;
+  const confirmed = confirm(`Run ${phaseName} command for "${story.title}" on desktop?`);
+  if (!confirmed) return;
+
+  ws.send(JSON.stringify({
+    type: 'story:launch',
+    data: { slug }
+  }));
+
+  showToast('Launching on desktop...');
+}
+
+/** Update the badge count on the Terminal nav button. */
+function updateNavBadge() {
+  const badge = document.getElementById('nav-badge');
+  if (!badge) return;
+  if (activeStories.length > 0) {
+    badge.textContent = activeStories.length;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────
