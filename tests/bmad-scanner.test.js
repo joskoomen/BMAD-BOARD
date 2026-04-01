@@ -344,8 +344,8 @@ describe('Error resilience', () => {
     const result = scanProject(tmpDir);
     expect(result.found).toBe(true);
     // With an unparseable config, projectName falls back to empty string
-    expect(result.config.projectName).toBeDefined();
-    expect(result.epics).toBeDefined();
+    expect(result.config.projectName).toBe('');
+    expect(Array.isArray(result.epics)).toBe(true);
   });
 
   it('empty sprint-status.yaml returns empty epics', () => {
@@ -375,7 +375,7 @@ development_status:
     writeFile('_bmad/bmm/config.yaml', 'output_folder: nonexistent-output\n');
     const result = scanProject(tmpDir);
     expect(result.found).toBe(true);
-    expect(result.warning).toBeDefined();
+    expect(typeof result.warning).toBe('string');
     expect(result.epics).toEqual([]);
   });
 
