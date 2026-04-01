@@ -1,5 +1,15 @@
+import path from 'path';
 import { getSyncProviderList, getSyncProviderKeys, getSyncProvider } from '../lib/sync-providers.js';
 import { SyncEngine } from '../lib/sync-engine.js';
+
+vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
+  McpServer: class { tool() {} resource() {} connect() {} }
+}));
+vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+  StdioServerTransport: class {}
+}));
+
+const { parseArgs } = await import('../lib/mcp-server.js');
 
 /**
  * MCP server tests — validate that the tools and engine work correctly
@@ -85,5 +95,54 @@ describe('MCP Server tool dependencies', () => {
         expect(Array.isArray(provider.configFields)).toBe(true);
       });
     }
+  });
+});
+
+describe('parseArgs', () => {
+  it('extracts --project-path from argv', () => {
+    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/tmp/my-project']);
+    expect(args.projectPath).toBe(path.resolve('/tmp/my-project'));
+  });
+
+  it('returns empty object when no args', () => {
+    const args = parseArgs(['node', 'mcp-server.js']);
+    expect(args).toEqual({});
+  });
+
+  it('ignores unknown flags', () => {
+    const args = parseArgs(['node', 'mcp-server.js', '--verbose', '--project-path', '/tmp/proj']);
+    expect(args.projectPath).toBe(path.resolve('/tmp/proj'));
+    expect(args.verbose).toBeUndefined();
+  });
+
+  it('resolves relative paths', () => {
+    const args = parseArgs(['node', 'mcp-server.js', '--project-path', 'relative/path']);
+    expect(path.isAbsolute(args.projectPath)).toBe(true);
+  });
+
+  it('ignores --project-path without a following value', () => {
+    const args = parseArgs(['node', 'mcp-server.js', '--project-path']);
+    expect(args).toEqual({});
+  });
+
+  it('only processes the first --project-path (last occurrence wins via reassignment)', () => {
+    // The implementation iterates linearly: last match wins
+    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/first', '--project-path', '/second']);
+    expect(args.projectPath).toBe(path.resolve('/second'));
+  });
+
+  it('handles argv shorter than 2 elements without crashing', () => {
+    expect(() => parseArgs([])).not.toThrow();
+    expect(() => parseArgs(['node'])).not.toThrow();
+  });
+
+  it('returns only projectPath key when --project-path is provided', () => {
+    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/some/path']);
+    expect(Object.keys(args)).toEqual(['projectPath']);
+  });
+
+  it('resolves absolute path unchanged', () => {
+    const args = parseArgs(['node', 'mcp-server.js', '--project-path', '/absolute/path']);
+    expect(args.projectPath).toBe('/absolute/path');
   });
 });

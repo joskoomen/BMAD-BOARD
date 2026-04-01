@@ -1,36 +1,12 @@
+/**
+ * Tests for phase change detection logic.
+ *
+ * Imports from lib/phase-detection.js — the shared module used by
+ * both the renderer (app.js) and these tests.
+ */
+
 import { describe, it, expect } from 'vitest';
-
-// ── Phase change detection (extracted logic from app.js) ────────────────
-
-function detectPhaseChanges(previousStates, currentEpics) {
-  const changes = [];
-  for (const epic of currentEpics) {
-    for (const story of (epic.stories || [])) {
-      const prev = previousStates[story.slug];
-      if (prev && prev !== story.status) {
-        changes.push({
-          slug: story.slug,
-          title: story.title,
-          epicNumber: story.epicNumber,
-          storyNumber: story.storyNumber,
-          from: prev,
-          to: story.status
-        });
-      }
-    }
-  }
-  return changes;
-}
-
-function snapshotStates(epics) {
-  const states = {};
-  for (const epic of epics) {
-    for (const story of (epic.stories || [])) {
-      states[story.slug] = story.status;
-    }
-  }
-  return states;
-}
+import { detectPhaseChanges, snapshotStates } from '../lib/phase-detection.js';
 
 // ── Tests ───────────────────────────────────────────────────────────────
 
@@ -161,5 +137,66 @@ describe('State snapshot', () => {
 
   it('handles epics without stories', () => {
     expect(snapshotStates([{ number: 1 }])).toEqual({});
+  });
+
+  it('last writer wins when same slug appears in multiple epics', () => {
+    // Edge case: duplicate slug across epics — last one wins
+    const epics = [
+      { number: 1, stories: [{ slug: 'dupe', status: 'backlog' }] },
+      { number: 2, stories: [{ slug: 'dupe', status: 'in-progress' }] }
+    ];
+    const snapshot = snapshotStates(epics);
+    // second epic overwrites first
+    expect(snapshot.dupe).toBe('in-progress');
+  });
+});
+
+// ── Additional edge cases for detectPhaseChanges ─────────────────────
+
+describe('detectPhaseChanges edge cases', () => {
+  it('returns empty array when previousStates is empty', () => {
+    const epics = [{ number: 1, stories: [{ slug: 'x', status: 'done' }] }];
+    expect(detectPhaseChanges({}, epics)).toEqual([]);
+  });
+
+  it('returns empty array when currentEpics is empty', () => {
+    const prev = { 'x': 'in-progress' };
+    expect(detectPhaseChanges(prev, [])).toEqual([]);
+  });
+
+  it('includes title, epicNumber, storyNumber in change objects', () => {
+    const prev = { '1-2-impl': 'backlog' };
+    const epics = [{
+      number: 1,
+      stories: [{
+        slug: '1-2-impl',
+        title: 'Implement Feature',
+        epicNumber: 1,
+        storyNumber: 2,
+        status: 'in-progress'
+      }]
+    }];
+    const changes = detectPhaseChanges(prev, epics);
+    expect(changes[0]).toMatchObject({
+      title: 'Implement Feature',
+      epicNumber: 1,
+      storyNumber: 2
+    });
+  });
+
+  it('does not emit change when status is same as previous', () => {
+    const prev = { 'x': 'done' };
+    const epics = [{ number: 1, stories: [{ slug: 'x', title: 'X', status: 'done' }] }];
+    expect(detectPhaseChanges(prev, epics)).toEqual([]);
+  });
+
+  it('handles epics with null/undefined stories gracefully', () => {
+    const prev = { 'x': 'backlog' };
+    const epics = [
+      { number: 1, stories: null },
+      { number: 2 }
+    ];
+    expect(() => detectPhaseChanges(prev, epics)).not.toThrow();
+    expect(detectPhaseChanges(prev, epics)).toEqual([]);
   });
 });
