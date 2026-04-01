@@ -5,7 +5,7 @@
  * native node-pty module, which is difficult to mock via vitest with CJS.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { TerminalManager } from '../lib/terminal-manager.js';
 import { TerminalManager } from '../lib/terminal-manager.js';
 
 // ── Mock PTY factory ───────────────────────────────────────────────────
