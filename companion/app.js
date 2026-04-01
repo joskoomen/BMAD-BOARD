@@ -23,6 +23,12 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 let watchingSharedTerminal = null;
 let sharedTerminalSessions = [];
 
+// Active stories (stories with running terminal sessions on desktop)
+let activeStories = [];
+
+// Pending terminal switch: set when a task is launched and cleared when shared-list arrives
+let pendingTerminalSwitch = false;
+
 const PHASES = {
   'backlog':       { label: 'Backlog',     icon: '\u25CB', color: 'var(--phase-backlog)' },
   'ready-for-dev': { label: 'Ready',       icon: '\u25D0', color: 'var(--phase-ready)' },
@@ -206,7 +212,15 @@ function connectWebSocket() {
   };
 }
 
-/** Schedule a WebSocket reconnection with exponential backoff. */
+/**
+ * Schedule a future attempt to re-establish the WebSocket connection using exponential backoff.
+ *
+ * Clears any existing scheduled reconnect, returns immediately if the maximum reconnect
+ * attempts have been reached, increments the reconnect attempt counter, and schedules
+ * a reconnection after an exponentially increasing delay (capped at 30 seconds).
+ * When the timer fires, a reconnection is attempted only if there is no active socket
+ * or the socket is closed.
+ */
 function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
@@ -221,8 +235,8 @@ function scheduleReconnect() {
 }
 
 /**
- * Dispatch an incoming WebSocket message to the appropriate handler.
- * @param {Object} msg - Parsed JSON message with a `type` field.
+ * Route an incoming WebSocket message to the matching handler, updating application state, UI, or notifications as needed.
+ * @param {Object} msg - Parsed message object; must include a `type` string and an optional `data` payload whose shape depends on `type`.
  */
 function handleWSMessage(msg) {
   switch (msg.type) {
@@ -264,12 +278,40 @@ function handleWSMessage(msg) {
     case 'terminal:shared-list':
       sharedTerminalSessions = msg.data.sessions || [];
       updateTerminalModeIndicator();
+      // If a task was just launched, switch to watching the latest shared terminal
+      if (pendingTerminalSwitch && sharedTerminalSessions.length > 0) {
+        pendingTerminalSwitch = false;
+        setSharedMode(true);
+        watchSharedTerminal(sharedTerminalSessions[sharedTerminalSessions.length - 1].id);
+        showTerminal();
+      }
       break;
 
     // Story phase advance
     case 'story:advanced':
       showToast(`${msg.data.slug}: ${msg.data.oldPhase} \u2192 ${msg.data.newPhase}`);
       break;
+
+    // Active stories state update
+    case 'stories:active':
+      activeStories = msg.data.stories || [];
+      if (currentView === 'dashboard') renderDashboard();
+      else if (currentView === 'epic' && currentEpic) renderEpicDetail();
+      updateNavBadge();
+      break;
+
+    // Task launched feedback — command is now running on desktop
+    case 'story:task-launched': {
+      const { slug, phase, command } = msg.data;
+      showLocalNotification('Task Launched', `${phase} command running for ${slug}`);
+      // Request shared terminal list; the terminal:shared-list handler will
+      // detect pendingTerminalSwitch and auto-switch to the latest session
+      pendingTerminalSwitch = true;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminal:list-shared' }));
+      }
+      break;
+    }
 
     // Notifications from server
     case 'notification':
@@ -391,7 +433,13 @@ function handleRefresh() {
 
 // ── Renderers ───────────────────────────────────────────────────────────
 
-/** Render the epic cards grid on the dashboard from current project data. */
+/**
+ * Render the dashboard's epic grid using the current project data and update related UI elements.
+ *
+ * Updates the project name and meta summary, then builds an epic card for each epic showing:
+ * epic number, phase pill, title, a progress bar with completed/total counts, and per-story phase dots.
+ * Stories that are currently active (have running desktop terminals) receive the `pulsing` class on their dot.
+ */
 function renderDashboard() {
   if (!projectData) return;
 
@@ -450,7 +498,7 @@ function renderDashboard() {
     summary.className = 'phase-summary';
     for (const s of epic.stories) {
       const dot = document.createElement('div');
-      dot.className = 'phase-dot';
+      dot.className = 'phase-dot' + (isStoryActive(s.slug) ? ' pulsing' : '');
       dot.style.background = PHASES[s.status]?.color || 'var(--phase-backlog)';
       dot.title = s.title;
       summary.appendChild(dot);
@@ -464,7 +512,14 @@ function renderDashboard() {
   }
 }
 
-/** Render the story list for the currently selected epic. */
+/**
+ * Render the selected epic's detail view and populate its stories list in the DOM.
+ *
+ * Updates the epic header elements (#epic-status, #epic-title) and replaces the
+ * contents of #stories-list with story cards that reflect each story's phase,
+ * whether it is currently running on the desktop, and the appropriate action
+ * buttons (Run or Advance) for that story.
+ */
 function renderEpicDetail() {
   if (!currentEpic) return;
 
@@ -481,10 +536,12 @@ function renderEpicDetail() {
 
   for (const story of epic.stories) {
     const card = document.createElement('div');
-    card.className = 'story-card';
+    const active = isStoryActive(story.slug);
+    card.className = 'story-card' + (active ? ' story-active' : '');
 
     const canAdvance = story.status !== 'done';
     const nextPhase = canAdvance ? PHASE_ORDER[PHASE_ORDER.indexOf(story.status) + 1] : null;
+    const canLaunch = ['ready-for-dev', 'in-progress', 'review'].includes(story.status);
 
     // Story number
     const num = document.createElement('div');
@@ -497,29 +554,59 @@ function renderEpicDetail() {
     const titleSpan = document.createElement('span');
     titleSpan.className = 'story-title';
     titleSpan.textContent = story.title;
+    const pillWrap = document.createElement('span');
+    pillWrap.style.display = 'inline-flex';
+    pillWrap.style.alignItems = 'center';
+    pillWrap.style.gap = '4px';
     const pill = document.createElement('span');
     pill.className = 'phase-pill';
     pill.setAttribute('data-phase', story.status);
     pill.textContent = PHASES[story.status]?.label || story.status;
+    pillWrap.appendChild(pill);
+    if (active) {
+      const dot = document.createElement('span');
+      dot.className = 'active-dot';
+      dot.title = 'Running on desktop';
+      pillWrap.appendChild(dot);
+    }
     header.appendChild(titleSpan);
-    header.appendChild(pill);
+    header.appendChild(pillWrap);
 
     card.appendChild(num);
     card.appendChild(header);
 
-    // Advance button
-    if (canAdvance && nextPhase) {
+    // Action buttons
+    if (canAdvance || canLaunch) {
       const actions = document.createElement('div');
       actions.className = 'story-actions';
-      const btn = document.createElement('button');
-      btn.className = 'btn-advance';
-      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
-      btn.appendChild(document.createTextNode(` ${PHASES[nextPhase]?.label || nextPhase}`));
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        advanceStory(story.slug);
-      });
-      actions.appendChild(btn);
+
+      // Run button (re-run current phase without advancing)
+      if (canLaunch) {
+        const runBtn = document.createElement('button');
+        runBtn.className = 'btn-run' + (active ? ' running' : '');
+        runBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+        runBtn.appendChild(document.createTextNode(active ? ' Running' : ' Run'));
+        if (active) runBtn.disabled = true;
+        runBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          launchStory(story.slug);
+        });
+        actions.appendChild(runBtn);
+      }
+
+      // Advance button
+      if (canAdvance && nextPhase) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-advance';
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+        btn.appendChild(document.createTextNode(` ${PHASES[nextPhase]?.label || nextPhase}`));
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          advanceStory(story.slug);
+        });
+        actions.appendChild(btn);
+      }
+
       card.appendChild(actions);
     }
 
@@ -569,6 +656,59 @@ function findStory(slug) {
     if (story) return story;
   }
   return null;
+}
+
+// ── Active Stories Helpers ──────────────────────────────────────────────
+
+/**
+ * Determine whether a story currently has an active desktop terminal session.
+ * @param {string} slug - The story's slug identifier.
+ * @returns {Object|null} The matching active story object from `activeStories` if found, `null` otherwise.
+ */
+function isStoryActive(slug) {
+  return activeStories.find(s => s.slug === slug) || null;
+}
+
+/**
+ * Prompt the user and request the server to run the story's current phase command on a desktop host.
+ *
+ * If no open WebSocket connection exists, displays a "Not connected" toast and does nothing. Prompts the
+ * user for confirmation; on confirmation sends a `story:launch` message with the story slug and shows a
+ * "Launching on desktop..." toast.
+ *
+ * @param {string} slug - The story slug identifier.
+ */
+function launchStory(slug) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast('Not connected');
+    return;
+  }
+
+  const story = findStory(slug);
+  if (!story) return;
+
+  const phaseName = PHASES[story.status]?.label || story.status;
+  const confirmed = confirm(`Run ${phaseName} command for "${story.title}" on desktop?`);
+  if (!confirmed) return;
+
+  ws.send(JSON.stringify({
+    type: 'story:launch',
+    data: { slug }
+  }));
+
+  showToast('Launching on desktop...');
+}
+
+/** Update the badge count on the Terminal nav button. */
+function updateNavBadge() {
+  const badge = document.getElementById('nav-badge');
+  if (!badge) return;
+  if (activeStories.length > 0) {
+    badge.textContent = activeStories.length;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────
